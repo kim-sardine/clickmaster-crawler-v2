@@ -1,0 +1,162 @@
+# GitHub Actions 워크플로우
+
+## 1. 일일 크롤링 워크플로우 (daily-crawler.yml)
+
+```yaml
+name: Daily News Crawler
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 매일 오전 6시 UTC (한국시간 오후 3시)
+  workflow_dispatch:      # 수동 실행 가능
+    inputs:
+      target_date:
+        description: '분석할 날짜 (YYYY-MM-DD). 기본값은 어제 날짜'
+        required: false
+        type: string
+
+jobs:
+  crawl-news:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Run News Crawler
+        env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.target_date }}" ]; then
+            python scripts/crawl_news.py --date ${{ github.event.inputs.target_date }}
+          else
+            python scripts/crawl_news.py
+          fi
+```
+
+## 2. 특별 뉴스 처리 워크플로우 (naksi-king-processor.yml)
+
+```yaml
+name: Naksi King Processor
+on:
+  schedule:
+    - cron: '0 12 * * *'  # 매일 정오에 실행
+  workflow_dispatch:
+    inputs:
+      offset_limit:
+        description: 'API 요청의 최대 offset 값'
+        required: false
+        default: '0'
+        type: string
+
+jobs:
+  process-naksi-king:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Process Naksi King News
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.offset_limit }}" ]; then
+            python scripts/process_naksi_king.py --offset_limit ${{ github.event.inputs.offset_limit }}
+          else
+            python scripts/process_naksi_king.py
+          fi
+```
+
+## 3. 배치 모니터링 워크플로우 (batch-monitor.yml)
+
+```yaml
+name: Batch Monitor
+on:
+  schedule:
+    - cron: '0 */2 * * *'  # 2시간마다 실행
+  workflow_dispatch:
+
+jobs:
+  monitor-batches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Monitor Batches
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python scripts/monitor_batches.py
+      - name: Process Completed Batches
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python scripts/process_completed_batches.py
+```
+
+## 필요한 GitHub Secrets
+
+Repository Settings > Secrets and variables > Actions에 다음 시크릿을 추가:
+
+### 필수 Secrets
+- `OPENAI_API_KEY`: OpenAI API 키
+- `NAVER_CLIENT_ID`: 네이버 개발자 센터 API 클라이언트 ID  
+- `NAVER_CLIENT_SECRET`: 네이버 개발자 센터 API 클라이언트 시크릿
+- `SUPABASE_URL`: Supabase 프로젝트 URL
+- `SUPABASE_SERVICE_KEY`: Supabase 서비스 키 (관리자 권한)
+
+## 워크플로우 실행 로직
+
+1. **일일 크롤링**: `scripts/crawl_news.py` 실행으로 전날 네이버 뉴스를 수집하여 Supabase articles 테이블에 저장
+2. **배치 모니터링**: `scripts/monitor_batches.py` 실행으로 진행 중인 배치 상태 확인 및 새 배치 시작
+3. **완료된 배치 처리**: `scripts/process_completed_batches.py` 실행으로 배치 결과 다운로드 및 기사 점수 업데이트
+4. **특별 뉴스 처리**: `scripts/process_naksi_king.py` 실행으로 Naksi King 형태의 특별 뉴스 데이터 처리
+
+## 스크립트 분리의 장점
+
+### 1. **코드 가독성**
+- YAML 파일에서 긴 파이썬 코드 제거
+- 각 스크립트의 역할과 책임이 명확
+
+### 2. **유지보수성**
+- 개별 스크립트 독립적 수정 가능
+- 로컬에서 개별 테스트 실행 가능
+- 버전 관리 및 코드 리뷰 용이
+
+### 3. **재사용성**
+- GitHub Actions 외부에서도 스크립트 직접 실행 가능
+- 다른 CI/CD 도구에서도 동일한 스크립트 사용 가능
+
+### 4. **디버깅**
+- 각 스크립트 개별 실행으로 문제 격리 용이
+- 구조화된 로깅으로 문제 추적 개선
+
+## 실행 시간 제한 고려사항
+
+- GitHub Actions 최대 실행 시간: 6시간
+- OpenAI 배치 완료 시간: 최대 24시간
+- 따라서 배치 시작과 완료 처리를 분리하여 구현

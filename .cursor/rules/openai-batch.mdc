@@ -1,0 +1,312 @@
+# OpenAI 배치 처리 로직 (최신 API)
+
+## 클라이언트 초기화
+
+```python
+import os
+from openai import OpenAI, AsyncOpenAI
+from openai.types import Batch, BatchError, BatchRequestCounts
+
+# 동기 클라이언트
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+# 비동기 클라이언트
+async_client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+```
+
+## 배치 API 메서드 (최신)
+
+### 1. 배치 생성
+```python
+# HTTP: POST /batches
+batch = client.batches.create(
+    input_file_id="file-abc123",
+    endpoint="/v1/chat/completions",
+    completion_window="24h",
+    metadata={"description": "naver news clickbait scoring"}
+)
+```
+
+### 2. 배치 조회
+```python
+# HTTP: GET /batches/{batch_id}
+batch = client.batches.retrieve("batch_abc123")
+```
+
+### 3. 배치 목록 조회
+```python
+# HTTP: GET /batches
+batches = client.batches.list(limit=20)
+for batch in batches:
+    print(f"Batch {batch.id}: {batch.status}")
+```
+
+### 4. 배치 취소
+```python
+# HTTP: POST /batches/{batch_id}/cancel
+cancelled_batch = client.batches.cancel("batch_abc123")
+```
+
+## 배치 상태 관리
+
+### 상태 코드 (최신)
+```python
+BATCH_STATUS = {
+    'validating': '검증 중',
+    'failed': '검증 실패', 
+    'in_progress': '실행 중',
+    'finalizing': '완료 처리 중',
+    'completed': '완료',
+    'expired': '만료',
+    'cancelling': '취소 중',
+    'cancelled': '취소됨'
+}
+```
+
+### 배치 상태 확인 로직
+```python
+def check_batch_status(batch_id: str) -> dict:
+    """배치 상태 확인 및 처리"""
+    try:
+        batch = client.batches.retrieve(batch_id)
+        
+        return {
+            'id': batch.id,
+            'status': batch.status,
+            'created_at': batch.created_at,
+            'in_progress_at': batch.in_progress_at,
+            'completed_at': batch.completed_at,
+            'finalizing_at': batch.finalizing_at,
+            'request_counts': batch.request_counts,
+            'output_file_id': batch.output_file_id,
+            'error_file_id': batch.error_file_id
+        }
+    except Exception as e:
+        return {'error': str(e)}
+```
+
+## 웹훅 이벤트 처리
+
+```python
+from openai.types.webhooks import (
+    BatchCompletedWebhookEvent,
+    BatchFailedWebhookEvent,
+    BatchCancelledWebhookEvent,
+    BatchExpiredWebhookEvent
+)
+
+def handle_webhook_event(event_data: dict):
+    """배치 웹훅 이벤트 처리"""
+    event_type = event_data.get('type')
+    
+    if event_type == 'batch.completed':
+        # 배치 완료 처리
+        handle_batch_completed(event_data)
+    elif event_type == 'batch.failed':
+        # 배치 실패 처리
+        handle_batch_failed(event_data)
+    elif event_type == 'batch.cancelled':
+        # 배치 취소 처리
+        handle_batch_cancelled(event_data)
+```
+
+## 파일 업로드 및 처리
+
+### 입력 파일 생성 (JSONL)
+```python
+import json
+from pathlib import Path
+
+def create_batch_input_file(articles: list) -> str:
+    """기사 목록을 JSONL 파일로 생성"""
+    jsonl_content = []
+    
+    for i, article in enumerate(articles):
+        request = {
+            "custom_id": f"article_{article['id']}",
+            "method": "POST", 
+            "url": "/v1/chat/completions",
+            "body": {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": CLICKBAIT_PROMPT.format(
+                            title=article['title'],
+                            content=article['content'][:4000]  # 토큰 제한
+                        )
+                    }
+                ],
+                "max_tokens": 500,
+                "temperature": 0.1
+            }
+        }
+        jsonl_content.append(json.dumps(request))
+    
+    # 파일 저장
+    file_path = Path(f"batch_input_{len(articles)}.jsonl")
+    file_path.write_text('\n'.join(jsonl_content))
+    
+    return str(file_path)
+```
+
+### 파일 업로드
+```python
+def upload_batch_file(file_path: str) -> str:
+    """배치 입력 파일 업로드"""
+    with open(file_path, "rb") as file:
+        uploaded_file = client.files.create(
+            file=file,
+            purpose="batch"
+        )
+    return uploaded_file.id
+```
+
+## 프롬프트 템플릿 (개선된 버전)
+
+```python
+CLICKBAIT_PROMPT = """다음 뉴스 기사의 제목이 얼마나 낚시성(clickbait)인지 0-100점으로 평가해주세요.
+
+**기사 제목**: {title}
+
+**기사 본문**: {content}
+
+**평가 기준**:
+- 0-20점: 사실적이고 직관적인 제목, 내용과 완전히 일치
+- 21-40점: 약간의 감정적 표현이 있지만 내용과 일치
+- 41-60점: 중간 정도의 낚시성, 호기심 유발하지만 과장 없음
+- 61-80점: 강한 낚시성, 내용과 일부 괴리 있음
+- 81-100점: 극도의 낚시성, 내용과 완전히 다르거나 오해 유발
+
+**응답 형식** (JSON):
+{{
+  "score": 점수 (0-100 정수),
+  "reason": "구체적인 평가 근거와 예시"
+}}
+
+JSON 형식으로만 응답하세요."""
+```
+
+## 결과 처리
+
+### 출력 파일 다운로드
+```python
+def download_batch_results(output_file_id: str) -> list:
+    """배치 결과 파일 다운로드 및 파싱"""
+    try:
+        # 파일 내용 다운로드
+        file_response = client.files.content(output_file_id)
+        content = file_response.read().decode('utf-8')
+        
+        results = []
+        for line in content.strip().split('\n'):
+            if line:
+                result = json.loads(line)
+                results.append({
+                    'custom_id': result['custom_id'],
+                    'response': result['response']['body'],
+                    'error': result.get('error')
+                })
+        
+        return results
+        
+    except Exception as e:
+        print(f"Error downloading results: {e}")
+        return []
+```
+
+### 에러 파일 처리
+```python
+def process_error_file(error_file_id: str) -> list:
+    """에러 파일 처리"""
+    try:
+        file_response = client.files.content(error_file_id)
+        content = file_response.read().decode('utf-8')
+        
+        errors = []
+        for line in content.strip().split('\n'):
+            if line:
+                error = json.loads(line)
+                errors.append({
+                    'custom_id': error['custom_id'],
+                    'error': error['error']
+                })
+        
+        return errors
+        
+    except Exception as e:
+        print(f"Error processing error file: {e}")
+        return []
+```
+
+## 비동기 처리
+
+```python
+async def async_batch_workflow(articles: list):
+    """비동기 배치 워크플로우"""
+    # 파일 생성
+    file_path = create_batch_input_file(articles)
+    
+    # 파일 업로드
+    with open(file_path, "rb") as file:
+        uploaded_file = await async_client.files.create(
+            file=file,
+            purpose="batch"
+        )
+    
+    # 배치 생성
+    batch = await async_client.batches.create(
+        input_file_id=uploaded_file.id,
+        endpoint="/v1/chat/completions",
+        completion_window="24h"
+    )
+    
+    return batch.id
+```
+
+## 배치 제약사항 (최신)
+
+### 사용량 제한
+- **최대 배치 크기**: 50,000개 요청
+- **동시 배치 수**: 계정당 최대 5개
+- **처리 시간**: 최대 24시간
+- **파일 크기**: 최대 200MB
+- **완료 기간**: 24시간 또는 7일
+
+### 비용 효율성
+- 일반 API 대비 **50% 할인**
+- 토큰 사용량 기준 과금
+- 실패한 요청은 과금되지 않음
+
+## 모니터링 및 디버깅
+
+### 요청 ID 추적
+```python
+def track_request_ids():
+    """요청 ID를 통한 디버깅"""
+    try:
+        batch = client.batches.create(...)
+        print(f"Request ID: {batch._request_id}")
+    except Exception as e:
+        if hasattr(e, 'request_id'):
+            print(f"Error Request ID: {e.request_id}")
+```
+
+### 배치 통계 확인
+```python
+def print_batch_stats(batch: Batch):
+    """배치 통계 출력"""
+    if batch.request_counts:
+        counts = batch.request_counts
+        print(f"Total: {counts.total}")
+        print(f"Completed: {counts.completed}")
+        print(f"Failed: {counts.failed}")
+```
+
+## 에러 처리 베스트 프랙티스
+
+1. **재시도 로직**: 일시적 실패에 대한 지수 백오프
+2. **상태 확인**: 주기적 폴링으로 상태 모니터링
+3. **웹훅 활용**: 실시간 상태 업데이트 수신
+4. **로그 기록**: 모든 API 호출과 응답 로깅
+5. **토큰 관리**: 요청당 토큰 수 제한 준수

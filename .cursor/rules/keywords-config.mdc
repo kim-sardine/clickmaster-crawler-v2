@@ -1,0 +1,197 @@
+# 키워드 설정 관리
+
+## 키워드 목록 정의
+
+### 기본 키워드 설정
+```python
+# src/config/keywords.py
+DEFAULT_KEYWORDS = [
+    # 정치/사회
+    "대통령", "국회", "정부", "선거", "정치", "사회", "경제",
+    
+    # 경제/비즈니스  
+    "주식", "부동산", "금리", "코스피", "비트코인", "투자",
+    
+    # 사회 이슈
+    "코로나", "백신", "마스크", "거리두기", "확진자",
+    
+    # 국제
+    "미국", "중국", "일본", "러시아", "우크라이나", "북한",
+    
+    # 문화/연예
+    "BTS", "블랙핑크", "드라마", "영화", "K팝", "아이돌",
+    
+    # 스포츠
+    "축구", "야구", "농구", "올림픽", "월드컵", "손흥민",
+    
+    # 기술/IT
+    "애플", "삼성", "네이버", "카카오", "AI", "인공지능",
+    
+    # 생활/건강
+    "날씨", "미세먼지", "건강", "의료", "병원", "약품"
+]
+
+def get_keywords() -> list[str]:
+    """키워드 목록을 반환합니다."""
+    return DEFAULT_KEYWORDS.copy()
+```
+
+## 키워드 관리 전략
+
+### 1. 카테고리별 분류
+```python
+KEYWORD_CATEGORIES = {
+    "politics": ["대통령", "국회", "정부", "선거", "정치"],
+    "economy": ["주식", "부동산", "금리", "코스피", "투자"],
+    "society": ["사회", "코로나", "백신", "확진자"],
+    "international": ["미국", "중국", "일본", "러시아", "북한"],
+    "entertainment": ["BTS", "블랙핑크", "드라마", "영화", "K팝"],
+    "sports": ["축구", "야구", "농구", "올림픽", "손흥민"],
+    "technology": ["애플", "삼성", "네이버", "카카오", "AI"],
+    "lifestyle": ["날씨", "미세먼지", "건강", "의료"]
+}
+
+def get_keywords_by_category(category: str) -> list[str]:
+    """카테고리별 키워드를 반환합니다."""
+    return KEYWORD_CATEGORIES.get(category, [])
+
+def get_all_keywords() -> list[str]:
+    """모든 카테고리의 키워드를 반환합니다."""
+    all_keywords = []
+    for keywords in KEYWORD_CATEGORIES.values():
+        all_keywords.extend(keywords)
+    return list(set(all_keywords))  # 중복 제거
+```
+
+### 2. 동적 키워드 관리
+```python
+# 환경변수나 설정 파일에서 추가 키워드 로드
+import os
+from typing import List
+
+def load_additional_keywords() -> List[str]:
+    """환경변수에서 추가 키워드를 로드합니다."""
+    additional = os.getenv("ADDITIONAL_KEYWORDS", "")
+    if additional:
+        return [k.strip() for k in additional.split(",") if k.strip()]
+    return []
+
+def get_final_keywords() -> List[str]:
+    """최종 키워드 목록을 반환합니다."""
+    keywords = get_all_keywords()
+    keywords.extend(load_additional_keywords())
+    return list(set(keywords))  # 중복 제거
+```
+
+## 키워드 사용 패턴
+
+### NewsCollector에서의 사용
+```python
+# src/core/news_collector.py에서 키워드 사용
+from src.config.keywords import get_final_keywords
+
+class NewsCollector:
+    def get_news(self, target_date: str) -> list[News]:
+        """키워드를 사용하여 뉴스를 수집합니다."""
+        keywords = get_final_keywords()
+        
+        # 키워드별로 뉴스 검색
+        news_list = []
+        for keyword in tqdm(keywords, desc="뉴스 검색 중.."):
+            _news_list = self._get_news_by_keyword(keyword, target_date)
+            news_list.extend(_news_list)
+        
+        return self._dedup_news(news_list)
+```
+
+### 키워드 검증 및 필터링
+```python
+def validate_keywords(keywords: List[str]) -> List[str]:
+    """키워드 검증 및 필터링"""
+    valid_keywords = []
+    
+    for keyword in keywords:
+        # 길이 검증
+        if 2 <= len(keyword) <= 20:
+            # 특수문자 제거
+            cleaned = re.sub(r'[^\w\s가-힣]', '', keyword).strip()
+            if cleaned:
+                valid_keywords.append(cleaned)
+    
+    return valid_keywords
+
+def get_validated_keywords() -> List[str]:
+    """검증된 키워드 목록 반환"""
+    raw_keywords = get_final_keywords()
+    return validate_keywords(raw_keywords)
+```
+
+## 키워드 성능 모니터링
+
+### 키워드별 수집 결과 추적
+```python
+from collections import defaultdict
+from typing import Dict
+
+class KeywordPerformanceTracker:
+    def __init__(self):
+        self.keyword_stats: Dict[str, dict] = defaultdict(dict)
+    
+    def track_keyword_result(self, keyword: str, article_count: int):
+        """키워드별 수집 결과 추적"""
+        if keyword not in self.keyword_stats:
+            self.keyword_stats[keyword] = {
+                'total_articles': 0,
+                'search_count': 0,
+                'avg_articles': 0
+            }
+        
+        stats = self.keyword_stats[keyword]
+        stats['total_articles'] += article_count
+        stats['search_count'] += 1
+        stats['avg_articles'] = stats['total_articles'] / stats['search_count']
+    
+    def get_top_keywords(self, limit: int = 10) -> List[tuple]:
+        """상위 성과 키워드 반환"""
+        sorted_keywords = sorted(
+            self.keyword_stats.items(),
+            key=lambda x: x[1]['avg_articles'],
+            reverse=True
+        )
+        return sorted_keywords[:limit]
+```
+
+## 키워드 설정 파일 예시
+
+### keywords.json (선택적)
+```json
+{
+  "default_keywords": [
+    "대통령", "국회", "정부", "선거", "정치",
+    "주식", "부동산", "금리", "코스피", "투자",
+    "BTS", "블랙핑크", "드라마", "영화"
+  ],
+  "seasonal_keywords": {
+    "summer": ["휴가", "여행", "해수욕장", "폭염"],
+    "winter": ["눈", "한파", "스키", "연말"]
+  },
+  "event_keywords": {
+    "election": ["선거", "투표", "후보", "공약"],
+    "olympics": ["올림픽", "메달", "선수", "경기"]
+  }
+}
+```
+
+## 환경변수 설정
+
+```env
+# 추가 키워드 (콤마로 구분)
+ADDITIONAL_KEYWORDS="신규키워드1,신규키워드2,신규키워드3"
+
+# 제외할 키워드
+EXCLUDED_KEYWORDS="제외키워드1,제외키워드2"
+```
+description:
+globs:
+alwaysApply: false
+---

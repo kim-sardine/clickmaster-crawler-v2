@@ -1,0 +1,159 @@
+# 데이터베이스 스키마
+
+## articles 테이블
+네이버 뉴스 기사 정보를 저장하는 메인 테이블
+
+```sql
+CREATE TABLE articles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,                    -- 기사 제목
+  content TEXT NOT NULL,                  -- 기사 본문
+  naver_url TEXT NOT NULL UNIQUE,        -- 네이버 뉴스 URL
+  reporter TEXT,                          -- 기자명
+  publisher TEXT,                         -- 언론사명
+  published_date TIMESTAMP NOT NULL,     -- 발행일시
+  clickbait_score INTEGER,               -- 낚시성 점수 (0-100)
+  evaluation_reason TEXT,                -- 평가 근거
+  batch_id TEXT,                         -- 연관된 배치 ID
+  processed_at TIMESTAMP,               -- 처리 완료 시간
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 인덱스 생성
+CREATE INDEX idx_articles_published_date ON articles(published_date);
+CREATE INDEX idx_articles_batch_id ON articles(batch_id);
+CREATE INDEX idx_articles_clickbait_score ON articles(clickbait_score);
+CREATE INDEX idx_articles_naver_url ON articles(naver_url);
+CREATE INDEX idx_articles_publisher ON articles(publisher);
+```
+
+## batch_jobs 테이블
+OpenAI 배치 작업 상태 관리
+
+```sql
+CREATE TABLE batch_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  openai_batch_id TEXT NOT NULL UNIQUE,  -- OpenAI 배치 ID
+  status TEXT NOT NULL DEFAULT 'created', -- created, in_progress, completed, failed, cancelled
+  article_count INTEGER NOT NULL,        -- 처리할 기사 수
+  input_file_id TEXT,                    -- OpenAI 입력 파일 ID
+  output_file_id TEXT,                   -- OpenAI 출력 파일 ID
+  error_file_id TEXT,                    -- OpenAI 에러 파일 ID
+  started_at TIMESTAMP,                  -- 배치 시작 시간
+  completed_at TIMESTAMP,               -- 배치 완료 시간
+  error_message TEXT,                    -- 에러 메시지
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 인덱스 생성
+CREATE INDEX idx_batch_jobs_status ON batch_jobs(status);
+CREATE INDEX idx_batch_jobs_openai_batch_id ON batch_jobs(openai_batch_id);
+```
+
+## 테이블 관계
+- `articles.batch_id` → `batch_jobs.openai_batch_id`
+- 하나의 배치 작업은 여러 기사를 처리할 수 있음
+- 기사는 하나의 배치에만 속할 수 있음
+
+## 데이터 플로우
+
+### 1. 뉴스 수집 단계
+```sql
+-- 새로운 뉴스 기사 삽입
+INSERT INTO articles (title, content, naver_url, reporter, publisher, published_date)
+VALUES ('기사제목', '기사내용', 'https://news.naver.com/...', '기자명', '언론사', '2024-01-01 12:00:00');
+```
+
+### 2. 배치 처리 준비
+```sql
+-- 미처리 기사 조회 (배치 처리 대상)
+SELECT id, title, content, naver_url 
+FROM articles 
+WHERE clickbait_score IS NULL 
+AND batch_id IS NULL
+LIMIT 1000;
+
+-- 진행 중인 배치 확인
+SELECT * FROM batch_jobs 
+WHERE status IN ('validating', 'in_progress', 'finalizing');
+```
+
+### 3. 배치 시작
+```sql
+-- 새 배치 작업 등록
+INSERT INTO batch_jobs (openai_batch_id, status, article_count, input_file_id)
+VALUES ('batch_abc123', 'validating', 500, 'file_xyz789');
+
+-- 배치에 할당된 기사들 업데이트
+UPDATE articles 
+SET batch_id = 'batch_abc123'
+WHERE id IN (SELECT id FROM articles WHERE clickbait_score IS NULL LIMIT 500);
+```
+
+### 4. 배치 완료 후 결과 업데이트
+```sql
+-- 배치 결과로 기사 점수 업데이트
+UPDATE articles 
+SET clickbait_score = 75, 
+    evaluation_reason = '제목이 본문 내용과 일치하지만 약간의 과장이 있음',
+    processed_at = NOW()
+WHERE naver_url = 'https://news.naver.com/specific-article';
+
+-- 배치 작업 완료 처리
+UPDATE batch_jobs 
+SET status = 'completed', 
+    completed_at = NOW(),
+    output_file_id = 'output_file_123'
+WHERE openai_batch_id = 'batch_abc123';
+```
+
+## Supabase 클라이언트 설정
+
+### 인증 및 연결
+```python
+from supabase import create_client, Client
+
+def get_supabase_client() -> Client:
+    """Supabase 클라이언트를 생성합니다."""
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY")  # 서버 사이드에서는 service key 사용
+    
+    if not url or not key:
+        raise ValueError("Supabase 환경변수가 설정되지 않았습니다.")
+    
+    return create_client(url, key)
+```
+
+### Row Level Security (RLS) 정책
+```sql
+-- articles 테이블 RLS 활성화
+ALTER TABLE articles ENABLE ROW LEVEL SECURITY;
+
+-- 서비스 키로는 모든 작업 허용
+CREATE POLICY "Service role full access" ON articles
+FOR ALL USING (auth.role() = 'service_role');
+
+-- batch_jobs 테이블도 동일하게 설정
+ALTER TABLE batch_jobs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access" ON batch_jobs
+FOR ALL USING (auth.role() = 'service_role');
+```
+
+## 환경변수
+```env
+# OpenAI API (필수)
+OPENAI_API_KEY=your_openai_api_key
+
+# 네이버 개발자 센터 API (필수)
+NAVER_CLIENT_ID=your_naver_client_id
+NAVER_CLIENT_SECRET=your_naver_client_secret
+
+# Supabase 데이터베이스 (필수)
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_KEY=your_supabase_service_key  # 서버 사이드 작업용 (필수)
+
+# 선택사항
+SUPABASE_ANON_KEY=your_supabase_anon_key  # 클라이언트 사이드에서만 필요
+```

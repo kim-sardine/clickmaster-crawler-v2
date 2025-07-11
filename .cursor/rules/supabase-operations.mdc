@@ -1,0 +1,348 @@
+# Supabase 데이터베이스 연동
+
+## 클라이언트 설정
+
+### 기본 클라이언트 (src/database/supabase_client.py)
+```python
+import os
+from typing import Optional
+from supabase import create_client, Client
+
+def get_supabase_client() -> Client:
+    """Supabase 클라이언트를 생성합니다."""
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
+    
+    if not url or not key:
+        raise ValueError("SUPABASE_URL과 SUPABASE_SERVICE_KEY 환경변수가 필요합니다.")
+    
+    return create_client(url, key)
+
+# 전역 클라이언트 인스턴스
+_supabase_client: Optional[Client] = None
+
+def get_client() -> Client:
+    """싱글톤 Supabase 클라이언트를 반환합니다."""
+    global _supabase_client
+    if _supabase_client is None:
+        _supabase_client = get_supabase_client()
+    return _supabase_client
+```
+
+## 뉴스 데이터 조작 (src/database/operations.py)
+
+### 뉴스 저장
+```python
+from typing import List, Dict, Optional
+from supabase import Client
+from src.models.base import News
+from src.database.supabase_client import get_client
+
+def save_articles(news_list: List[News]) -> bool:
+    """뉴스 목록을 articles 테이블에 저장합니다."""
+    try:
+        supabase = get_client()
+        
+        # News 객체를 dict로 변환
+        articles_data = []
+        for news in news_list:
+            article_data = {
+                'title': news.title,
+                'content': news.content,
+                'naver_url': news.naver_url,
+                'reporter': news.reporter,
+                'publisher': news.publisher,
+                'published_date': news.published_date
+            }
+            articles_data.append(article_data)
+        
+        # 배치 삽입 (upsert 사용으로 중복 방지)
+        result = supabase.table('articles').upsert(
+            articles_data,
+            on_conflict='naver_url'  # URL 기준으로 중복 처리
+        ).execute()
+        
+        logger.info(f"Successfully saved {len(result.data)} articles to database")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving articles to database: {str(e)}")
+        return False
+
+def get_unprocessed_articles(limit: int = 1000) -> List[Dict]:
+    """미처리 기사들을 조회합니다."""
+    try:
+        supabase = get_client()
+        
+        result = supabase.table('articles').select(
+            'id, title, content, naver_url'
+        ).is_(
+            'clickbait_score', 'null'
+        ).is_(
+            'batch_id', 'null'
+        ).limit(limit).execute()
+        
+        return result.data
+        
+    except Exception as e:
+        logger.error(f"Error fetching unprocessed articles: {str(e)}")
+        return []
+
+def update_articles_with_batch(article_ids: List[str], batch_id: str) -> bool:
+    """기사들에 배치 ID를 할당합니다."""
+    try:
+        supabase = get_client()
+        
+        result = supabase.table('articles').update({
+            'batch_id': batch_id
+        }).in_('id', article_ids).execute()
+        
+        logger.info(f"Assigned batch {batch_id} to {len(result.data)} articles")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating articles with batch ID: {str(e)}")
+        return False
+
+def update_article_scores(scores_data: List[Dict]) -> bool:
+    """배치 결과로 기사 점수를 업데이트합니다."""
+    try:
+        supabase = get_client()
+        
+        # 각 기사별로 개별 업데이트
+        for score_data in scores_data:
+            supabase.table('articles').update({
+                'clickbait_score': score_data['score'],
+                'evaluation_reason': score_data['reason'],
+                'processed_at': 'NOW()'
+            }).eq('naver_url', score_data['naver_url']).execute()
+        
+        logger.info(f"Updated scores for {len(scores_data)} articles")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating article scores: {str(e)}")
+        return False
+```
+
+### 배치 작업 관리
+```python
+def create_batch_job(batch_id: str, article_count: int, input_file_id: str) -> bool:
+    """새로운 배치 작업을 생성합니다."""
+    try:
+        supabase = get_client()
+        
+        batch_data = {
+            'openai_batch_id': batch_id,
+            'status': 'validating',
+            'article_count': article_count,
+            'input_file_id': input_file_id,
+            'started_at': 'NOW()'
+        }
+        
+        result = supabase.table('batch_jobs').insert(batch_data).execute()
+        logger.info(f"Created batch job: {batch_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error creating batch job: {str(e)}")
+        return False
+
+def get_active_batches() -> List[Dict]:
+    """진행 중인 배치 작업들을 조회합니다."""
+    try:
+        supabase = get_client()
+        
+        result = supabase.table('batch_jobs').select('*').in_(
+            'status', ['validating', 'in_progress', 'finalizing']
+        ).execute()
+        
+        return result.data
+        
+    except Exception as e:
+        logger.error(f"Error fetching active batches: {str(e)}")
+        return []
+
+def update_batch_status(batch_id: str, status: str, **kwargs) -> bool:
+    """배치 작업 상태를 업데이트합니다."""
+    try:
+        supabase = get_client()
+        
+        update_data = {
+            'status': status,
+            'updated_at': 'NOW()'
+        }
+        
+        # 추가 필드들 (completed_at, output_file_id 등)
+        update_data.update(kwargs)
+        
+        result = supabase.table('batch_jobs').update(
+            update_data
+        ).eq('openai_batch_id', batch_id).execute()
+        
+        logger.info(f"Updated batch {batch_id} status to {status}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating batch status: {str(e)}")
+        return False
+
+def get_completed_batches() -> List[Dict]:
+    """완료된 배치 작업들을 조회합니다."""
+    try:
+        supabase = get_client()
+        
+        result = supabase.table('batch_jobs').select('*').eq(
+            'status', 'completed'
+        ).is_(
+            'processed_at', 'null'  # 아직 후처리되지 않은 것들
+        ).execute()
+        
+        return result.data
+        
+    except Exception as e:
+        logger.error(f"Error fetching completed batches: {str(e)}")
+        return []
+
+def mark_batch_processed(batch_id: str) -> bool:
+    """배치를 처리 완료로 표시합니다."""
+    try:
+        supabase = get_client()
+        
+        result = supabase.table('batch_jobs').update({
+            'processed_at': 'NOW()'
+        }).eq('openai_batch_id', batch_id).execute()
+        
+        logger.info(f"Marked batch {batch_id} as processed")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error marking batch as processed: {str(e)}")
+        return False
+```
+
+## 통계 및 모니터링
+
+### 데이터베이스 상태 확인
+```python
+def get_database_stats() -> Dict:
+    """데이터베이스 통계를 조회합니다."""
+    try:
+        supabase = get_client()
+        
+        # 전체 기사 수
+        total_articles = supabase.table('articles').select(
+            'id', count='exact'
+        ).execute().count
+        
+        # 처리된 기사 수
+        processed_articles = supabase.table('articles').select(
+            'id', count='exact'
+        ).not_.is_('clickbait_score', 'null').execute().count
+        
+        # 진행 중인 배치 수
+        active_batches = supabase.table('batch_jobs').select(
+            'id', count='exact'
+        ).in_('status', ['validating', 'in_progress', 'finalizing']).execute().count
+        
+        # 완료된 배치 수
+        completed_batches = supabase.table('batch_jobs').select(
+            'id', count='exact'
+        ).eq('status', 'completed').execute().count
+        
+        return {
+            'total_articles': total_articles,
+            'processed_articles': processed_articles,
+            'unprocessed_articles': total_articles - processed_articles,
+            'active_batches': active_batches,
+            'completed_batches': completed_batches,
+            'processing_rate': (processed_articles / total_articles * 100) if total_articles > 0 else 0
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting database stats: {str(e)}")
+        return {}
+
+def get_recent_articles(days: int = 7, limit: int = 100) -> List[Dict]:
+    """최근 기사들을 조회합니다."""
+    try:
+        supabase = get_client()
+        
+        result = supabase.table('articles').select(
+            'title, naver_url, publisher, published_date, clickbait_score'
+        ).gte(
+            'published_date', f"NOW() - INTERVAL '{days} days'"
+        ).order(
+            'published_date', desc=True
+        ).limit(limit).execute()
+        
+        return result.data
+        
+    except Exception as e:
+        logger.error(f"Error fetching recent articles: {str(e)}")
+        return []
+```
+
+## 에러 처리 및 재시도
+
+### 연결 복원력
+```python
+import time
+from functools import wraps
+
+def retry_db_operation(max_retries: int = 3, delay: float = 1.0):
+    """데이터베이스 작업에 대한 재시도 데코레이터"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Database operation failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                        time.sleep(delay * (attempt + 1))  # 지수 백오프
+                    else:
+                        logger.error(f"Database operation failed after {max_retries} attempts: {str(e)}")
+            
+            raise last_exception
+        return wrapper
+    return decorator
+
+@retry_db_operation(max_retries=3)
+def safe_save_articles(news_list: List[News]) -> bool:
+    """재시도 로직이 있는 안전한 기사 저장"""
+    return save_articles(news_list)
+```
+
+## 환경별 설정
+
+### 개발/프로덕션 환경 분리
+```python
+import os
+
+def get_environment() -> str:
+    """현재 환경을 반환합니다."""
+    return os.getenv('ENVIRONMENT', 'development')
+
+def get_table_name(base_name: str) -> str:
+    """환경에 따른 테이블명을 반환합니다."""
+    env = get_environment()
+    if env == 'development':
+        return f"{base_name}_dev"
+    elif env == 'staging':
+        return f"{base_name}_staging"
+    else:
+        return base_name  # production
+
+# 사용 예시
+articles_table = get_table_name('articles')
+batch_jobs_table = get_table_name('batch_jobs')
+```
+description:
+globs:
+alwaysApply: false
+---

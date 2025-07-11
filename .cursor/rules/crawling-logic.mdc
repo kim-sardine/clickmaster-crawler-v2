@@ -1,0 +1,237 @@
+# 네이버 뉴스 크롤링 로직
+
+## 크롤링 전략
+
+### 1단계: 네이버 검색 API 활용
+- **대상**: 네이버 뉴스 검색 API (openapi.naver.com)
+- **방식**: 키워드 기반 검색
+- **수집 기간**: 지정된 날짜 범위 내 뉴스
+- **키워드 소스**: 사전 정의된 키워드 목록
+
+### 2단계: 개별 뉴스 크롤링
+- **대상**: 네이버 뉴스 상세 페이지 (news.naver.com)
+- **방식**: BeautifulSoup 직접 크롤링
+- **수집 정보**: 기자명, 언론사, 전체 본문
+
+## 크롤링 프로세스
+
+### 1. 키워드 기반 뉴스 검색
+```python
+# 네이버 검색 API 파라미터
+params = {
+    'query': keyword,
+    'sort': 'date',  # 최신순 정렬
+    'display': 100,  # 한번에 100개씩
+    'start': 1       # 시작 인덱스
+}
+
+# API 요청
+response = requests.get(
+    'https://openapi.naver.com/v1/search/news.json',
+    headers=NAVER_API_HEADER,
+    params=params
+)
+```
+
+### 2. 날짜 및 URL 필터링
+```python
+# 네이버 뉴스 URL만 필터링
+if "news.naver.com" not in item["link"]:
+    continue
+
+# 지정된 날짜 범위 확인
+published_date = parse_naver_pubdate(item["pubDate"])
+if start_dt <= published_date <= end_dt:
+    # 뉴스 수집 대상
+    pass
+```
+
+### 3. 기사 상세 정보 크롤링
+```python
+def crawl_naver_news(url: str) -> NaverNewsCrawlerResult:
+    response = requests.get(url, timeout=10)
+    soup = BeautifulSoup(response.text, "html.parser")
+    
+    title = get_title(soup)      # 제목 추출
+    content = get_content(soup)  # 본문 추출  
+    reporter = get_reporter(soup) # 기자명 추출
+    publisher = get_publisher(soup) # 언론사 추출
+```
+
+## 수집 데이터 구조
+
+```python
+@dataclass
+class News:
+    title: str              # 기사 제목
+    content: str            # 기사 본문
+    naver_url: str         # 네이버 뉴스 URL
+    published_date: str    # 발행일시 (YYYY-MM-DD HH:MM:SS)
+    reporter: str = ""     # 기자명
+    publisher: str = ""    # 언론사명
+    score: int = 0         # 낚시성 점수 (0-100)
+    reason: str = ""       # 평가 근거
+```
+
+## API 설정 및 제한
+
+### 네이버 개발자 센터 API
+```python
+NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
+NAVER_API_HEADER = {
+    "X-Naver-Client-Id": os.getenv("NAVER_CLIENT_ID"),
+    "X-Naver-Client-Secret": os.getenv("NAVER_CLIENT_SECRET"),
+}
+```
+
+### API 사용량 제한
+- **일일 호출 한도**: 25,000회
+- **한번에 가져올 수 있는 뉴스**: 최대 100개
+- **최대 검색 결과**: 1,000개 (start 파라미터 제한)
+- **키워드당 수집 제한**: 1,000개
+
+## 크롤링 상세 로직
+
+### 제목 추출
+```python
+def get_title(soup: BeautifulSoup) -> str:
+    # 기본 제목 요소
+    title_area = soup.find("h2", id="title_area")
+    if title_area is None:
+        # 대체 제목 요소
+        title_area = soup.find("h2", class_="media_end_head_headline")
+    return title_area.text.strip() if title_area else ""
+```
+
+### 기자명 추출
+```python
+def get_reporter(soup: BeautifulSoup) -> str:
+    # 기자 카드 스타일
+    journalistcard_items = soup.find_all("div", class_="media_journalistcard_item_inner")
+    if journalistcard_items:
+        # 기자명 추출 및 "기자" 문자열 제거
+        pass
+    
+    # 바이라인 스타일
+    bylines = soup.find_all("span", class_="byline_s")
+    if bylines:
+        # 이메일, 직함 등 정규식으로 제거
+        pass
+```
+
+### 본문 추출
+```python
+def get_content(soup: BeautifulSoup) -> str:
+    # 일반 네이버 뉴스
+    article = soup.find("article", class_="_article_content")
+    if article: return clean_content(article.text)
+    
+    # 다른 본문 구조
+    article = soup.find("div", id="newsct_article")
+    if article: return clean_content(article.text)
+    
+    # 스포츠 뉴스
+    article = soup.find("div", id="newsEndContents")
+    if article: return clean_content(article.text)
+```
+
+## 크롤링 제약사항 및 준수사항
+
+### API 재시도 로직
+```python
+def _make_api_request(self, params, retry_count=0):
+    try:
+        response = requests.get(NAVER_NEWS_URL, headers=NAVER_API_HEADER, 
+                               params=params, timeout=10)
+        response.raise_for_status()
+        return response
+    except requests.RequestException as e:
+        if retry_count < MAX_RETRIES:
+            time.sleep(RETRY_DELAY * (retry_count + 1))
+            return self._make_api_request(params, retry_count + 1)
+        return None
+```
+
+### 크롤링 에러 처리
+1. **네트워크 에러**: 3회 재시도 후 스킵
+2. **파싱 에러**: 로그 기록 후 다음 뉴스로 진행
+3. **타임아웃**: 10초 타임아웃 설정
+4. **Rate Limiting**: 자동 재시도 로직
+
+## 중복 처리 및 데이터 검증
+
+### 중복 제거
+```python
+def _dedup_news(self, news_list: list[News]) -> list[News]:
+    seen_urls: set[str] = set()
+    deduped_news_list = []
+    
+    for news in news_list:
+        if news.naver_url not in seen_urls:
+            deduped_news_list.append(news)
+            seen_urls.add(news.naver_url)
+    
+    return deduped_news_list
+```
+
+### 데이터 검증 기준
+```python
+# 설정값들
+MIN_TITLE_LENGTH = 9      # 최소 제목 길이
+MIN_CONTENT_LENGTH = 100  # 최소 본문 길이  
+MAX_CONTENT_LENGTH = 700  # 최대 본문 길이
+
+# 검증 로직
+if not news.title or len(news.title) < MIN_TITLE_LENGTH:
+    continue  # 제목이 너무 짧으면 스킵
+
+if len(content) > MAX_CONTENT_LENGTH:
+    content = content[:MAX_CONTENT_LENGTH] + "..."  # 본문 자르기
+```
+
+### 텍스트 전처리
+```python
+def preprocess_news_text(text: str) -> str:
+    # HTML 태그 제거
+    text = re.sub(r'<[^>]+>', '', text)
+    # 특수 문자 정리
+    text = text.replace('&quot;', '"').replace('&amp;', '&')
+    # 공백 정리
+    return text.strip()
+```
+
+## 성능 최적화
+
+### 진행 상황 모니터링
+```python
+# tqdm을 사용한 진행률 표시
+for keyword in tqdm(keywords, desc="뉴스 검색 중.."):
+    # 키워드별 뉴스 검색
+    
+for news in tqdm(news_list, desc="뉴스 추가 정보 수집 중"):
+    # 개별 뉴스 크롤링
+```
+
+### 메모리 효율성
+- 키워드별로 순차 처리하여 메모리 사용량 제한
+- 대용량 뉴스 리스트 처리 시 배치 단위로 분할
+- 중복 제거를 통한 불필요한 데이터 제거
+
+## 로깅
+
+```python
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger('naver_crawler')
+```
+
+## 예외 상황 처리
+
+1. **네이버 사이트 구조 변경**: 선택자 업데이트 필요
+2. **접근 차단**: IP 차단 시 지연 시간 증가
+3. **서버 오류**: 5xx 에러 시 재시도 로직
