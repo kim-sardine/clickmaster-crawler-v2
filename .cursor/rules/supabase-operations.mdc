@@ -13,13 +13,13 @@ from supabase import create_client, Client
 import os
 
 url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_KEY")
+key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(url, key)
 ```
 
 ### 환경 변수 관리
 - `SUPABASE_URL`: Supabase 프로젝트 URL
-- `SUPABASE_KEY`: 서비스 롤 키 (읽기/쓰기 권한)
+- `SUPABASE_SERVICE_ROLE_KEY`: 서비스 롤 키 (읽기/쓰기 권한)
 - `SUPABASE_SERVICE_ROLE_KEY`: 관리자 권한 키
 
 ## 📝 기본 CRUD 연산

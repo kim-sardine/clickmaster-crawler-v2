@@ -13,7 +13,7 @@ class Settings:
 
     # Supabase 설정
     SUPABASE_URL = os.getenv("SUPABASE_URL")
-    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+    SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
     # Naver API 설정
     NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
@@ -24,8 +24,8 @@ class Settings:
 
     # 크롤링 설정
     DEFAULT_KEYWORDS = ["충격", "공포", "반전", "놀라운", "경악"]
-    MAX_ARTICLES_PER_KEYWORD = 50
-    CRAWL_DELAY_SECONDS = 1
+    MAX_ARTICLES_PER_KEYWORD = 100
+    CRAWL_DELAY_SECONDS = 0.5
 
     # 로깅 설정
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -34,7 +34,12 @@ class Settings:
     @classmethod
     def validate(cls) -> bool:
         """필수 설정 검증"""
-        required_settings = [cls.SUPABASE_URL, cls.SUPABASE_KEY, cls.NAVER_CLIENT_ID, cls.NAVER_CLIENT_SECRET]
+        required_settings = [
+            cls.SUPABASE_URL,
+            cls.SUPABASE_SERVICE_ROLE_KEY,
+            cls.NAVER_CLIENT_ID,
+            cls.NAVER_CLIENT_SECRET,
+        ]
 
         return all(setting is not None for setting in required_settings)
 

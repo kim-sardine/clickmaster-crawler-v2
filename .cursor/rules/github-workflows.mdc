@@ -50,7 +50,7 @@ jobs:
       - name: Crawl Naver API
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
@@ -59,7 +59,7 @@ jobs:
       - name: Crawl Naver Entertainment
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python scripts/crawl_news.py --date $(date +%Y-%m-%d) --source entertain
           
@@ -94,7 +94,7 @@ jobs:
       - name: Monitor Active Batches
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python scripts/monitor_batches.py --check-all
@@ -102,7 +102,7 @@ jobs:
       - name: Process Completed Batches
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python scripts/process_completed_batches.py --auto-process
@@ -159,7 +159,7 @@ jobs:
       - name: Execute Selected Operation
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
@@ -189,7 +189,7 @@ jobs:
 ```yaml
 secrets:
   SUPABASE_URL: "https://your-project.supabase.co"
-  SUPABASE_KEY: "your-supabase-service-role-key"
+  SUPABASE_SERVICE_ROLE_KEY: "your-supabase-service-role-key"
   OPENAI_API_KEY: "sk-your-openai-api-key"
   NAVER_CLIENT_ID: "your-naver-client-id"
   NAVER_CLIENT_SECRET: "your-naver-client-secret"

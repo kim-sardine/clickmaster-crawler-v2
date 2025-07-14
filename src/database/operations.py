@@ -31,6 +31,15 @@ class DatabaseOperations:
             기자 정보 딕셔너리
         """
         try:
+            # 이름과 언론사 정규화
+            name = name.strip()
+            publisher = publisher.strip()
+
+            # 익명 기자 처리 - 각 언론사별로 별도의 익명 기자 생성
+            if name in ["익명", "기자", "", " "]:
+                name = f"익명기자_{publisher}"
+                logger.debug(f"익명 기자명 정규화: {name}")
+
             # 기존 기자 조회
             existing = (
                 self.client.client.table("journalists")
@@ -41,22 +50,25 @@ class DatabaseOperations:
             )
 
             if existing.data:
-                logger.info(f"기존 기자 조회: {name} ({publisher})")
-                return existing.data[0]
+                journalist_info = existing.data[0]
+                logger.debug(f"기존 기자 조회: {name} ({publisher}) - ID: {journalist_info['id']}")
+                return journalist_info
 
             # 새 기자 생성
             journalist = Journalist(name=name, publisher=publisher, naver_uuid=naver_uuid)
+            journalist_data = journalist.to_dict()
 
-            result = self.client.client.table("journalists").insert(journalist.to_dict()).execute()
+            result = self.client.client.table("journalists").insert(journalist_data).execute()
 
             if result.data:
-                logger.info(f"새 기자 생성: {name} ({publisher})")
-                return result.data[0]
+                new_journalist = result.data[0]
+                logger.info(f"🆕 새 기자 생성: {name} ({publisher}) - ID: {new_journalist['id']}")
+                return new_journalist
             else:
-                raise Exception("기자 생성 실패")
+                raise Exception("기자 생성 실패 - 응답 데이터 없음")
 
         except Exception as e:
-            logger.error(f"기자 조회/생성 오류: {e}")
+            logger.error(f"기자 조회/생성 오류 [{name}, {publisher}]: {e}")
             raise
 
     def insert_article(self, article: Article) -> Dict[str, Any]:
@@ -92,7 +104,7 @@ class DatabaseOperations:
 
     def bulk_insert_articles(self, articles: List[Article]) -> List[Dict[str, Any]]:
         """
-        기사 배치 삽입
+        기사 배치 삽입 (기자 정보 캐싱으로 성능 최적화)
 
         Args:
             articles: 기사 리스트
@@ -100,17 +112,57 @@ class DatabaseOperations:
         Returns:
             삽입된 기사 정보 리스트
         """
+        if not articles:
+            logger.warning("삽입할 기사가 없습니다")
+            return []
+
+        # 기자 정보 캐싱을 위한 딕셔너리
+        journalist_cache = {}
         inserted_articles = []
 
-        for article in articles:
+        logger.info(f"배치 삽입 시작: {len(articles)}개 기사")
+
+        for i, article in enumerate(articles, 1):
             try:
-                result = self.insert_article(article)
-                inserted_articles.append(result)
+                # 기자 캐시 키 생성 (이름 + 언론사)
+                journalist_key = f"{article.journalist_name}_{article.publisher}"
+
+                # 캐시에서 기자 정보 조회
+                if journalist_key not in journalist_cache:
+                    journalist = self.get_or_create_journalist(article.journalist_name, article.publisher)
+                    journalist_cache[journalist_key] = journalist
+                    logger.debug(f"기자 정보 캐싱: {article.journalist_name} ({article.publisher})")
+                else:
+                    journalist = journalist_cache[journalist_key]
+                    logger.debug(f"기자 정보 캐시 히트: {article.journalist_name} ({article.publisher})")
+
+                # 기사에 기자 ID 설정
+                article.journalist_id = journalist["id"]
+                article_data = article.to_dict()
+
+                # 기사 삽입
+                result = self.client.client.table("articles").insert(article_data).execute()
+
+                if result.data:
+                    inserted_articles.append(result.data[0])
+                    logger.debug(f"기사 삽입 완료 ({i}/{len(articles)}): {article.title[:50]}...")
+                else:
+                    logger.warning(f"기사 삽입 실패 ({i}/{len(articles)}): {article.title[:50]}...")
+
             except Exception as e:
-                logger.error(f"기사 삽입 실패: {article.title[:50]}... - {e}")
+                logger.error(f"기사 삽입 실패 ({i}/{len(articles)}): {article.title[:50]}... - {e}")
                 continue
 
-        logger.info(f"배치 삽입 완료: {len(inserted_articles)}/{len(articles)}")
+        # 캐시 통계 로깅
+        total_journalists = len(journalist_cache)
+        logger.info(f"배치 삽입 완료: {len(inserted_articles)}/{len(articles)}개 기사, {total_journalists}명 기자 처리")
+
+        if journalist_cache:
+            logger.info("처리된 기자 목록:")
+            for journalist_key, journalist_info in journalist_cache.items():
+                name, publisher = journalist_key.split("_", 1)
+                logger.info(f"  - {name} ({publisher}): ID {journalist_info['id']}")
+
         return inserted_articles
 
     def check_duplicate_article(self, naver_url: str) -> bool:
@@ -189,3 +241,262 @@ class DatabaseOperations:
         except Exception as e:
             logger.error(f"기사 점수 업데이트 오류: {e}")
             return False
+
+    def update_journalist_stats_manual(self, journalist_id: str) -> bool:
+        """
+        특정 기자의 통계 수동 업데이트
+
+        Args:
+            journalist_id: 기자 ID
+
+        Returns:
+            업데이트 성공 여부
+        """
+        try:
+            # 해당 기자의 모든 기사 통계 계산
+            result = (
+                self.client.client.table("articles")
+                .select("clickbait_score")
+                .eq("journalist_id", journalist_id)
+                .execute()
+            )
+
+            if not result.data:
+                logger.warning(f"기자 ID {journalist_id}의 기사가 없습니다")
+                return False
+
+            # 통계 계산
+            total_articles = len(result.data)
+            scored_articles = [article for article in result.data if article["clickbait_score"] is not None]
+
+            if scored_articles:
+                scores = [article["clickbait_score"] for article in scored_articles]
+                avg_score = sum(scores) / len(scores)
+                max_score = max(scores)
+            else:
+                avg_score = 0.0
+                max_score = 0
+
+            # 기자 통계 업데이트
+            update_result = (
+                self.client.client.table("journalists")
+                .update(
+                    {
+                        "article_count": total_articles,
+                        "avg_clickbait_score": round(avg_score, 2),
+                        "max_score": max_score,
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                )
+                .eq("id", journalist_id)
+                .execute()
+            )
+
+            success = len(update_result.data) > 0
+            if success:
+                logger.info(
+                    f"기자 통계 업데이트 완료: {journalist_id} (기사수: {total_articles}, 평균: {avg_score:.2f}, 최고: {max_score})"
+                )
+
+            return success
+
+        except Exception as e:
+            logger.error(f"기자 통계 업데이트 오류: {e}")
+            return False
+
+    def update_all_journalist_stats(self) -> Dict[str, Any]:
+        """
+        모든 기자의 통계 일괄 업데이트
+
+        Returns:
+            업데이트 결과 딕셔너리
+        """
+        try:
+            # 모든 기자 조회
+            journalists_result = self.client.client.table("journalists").select("id, name, publisher").execute()
+
+            if not journalists_result.data:
+                logger.warning("업데이트할 기자가 없습니다")
+                return {"success": 0, "failed": 0, "total": 0}
+
+            success_count = 0
+            failed_count = 0
+            total_count = len(journalists_result.data)
+
+            logger.info(f"총 {total_count}명의 기자 통계 업데이트 시작")
+
+            for journalist in journalists_result.data:
+                try:
+                    if self.update_journalist_stats_manual(journalist["id"]):
+                        success_count += 1
+                    else:
+                        failed_count += 1
+                        logger.error(f"기자 통계 업데이트 실패: {journalist['name']} ({journalist['publisher']})")
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"기자 통계 업데이트 예외: {journalist['name']} ({journalist['publisher']}) - {e}")
+
+            result = {"success": success_count, "failed": failed_count, "total": total_count}
+
+            logger.info(f"기자 통계 일괄 업데이트 완료: 성공 {success_count}/{total_count}, 실패 {failed_count}")
+            return result
+
+        except Exception as e:
+            logger.error(f"기자 통계 일괄 업데이트 오류: {e}")
+            return {"success": 0, "failed": 0, "total": 0, "error": str(e)}
+
+    def get_journalist_stats_summary(self) -> Dict[str, Any]:
+        """
+        기자 통계 요약 정보 조회
+
+        Returns:
+            통계 요약 딕셔너리
+        """
+        try:
+            # 기자 총 수
+            journalists_result = self.client.client.table("journalists").select("id", count="exact").execute()
+            total_journalists = journalists_result.count
+
+            # 기사가 있는 기자 수
+            active_journalists_result = (
+                self.client.client.table("journalists").select("id", count="exact").gt("article_count", 0).execute()
+            )
+            active_journalists = active_journalists_result.count
+
+            # 평균 점수가 있는 기자 수 (AI 분석 완료된 기사가 있는 기자)
+            scored_journalists_result = (
+                self.client.client.table("journalists")
+                .select("id", count="exact")
+                .gt("avg_clickbait_score", 0)
+                .execute()
+            )
+            scored_journalists = scored_journalists_result.count
+
+            # 전체 기사 수
+            articles_result = self.client.client.table("articles").select("id", count="exact").execute()
+            total_articles = articles_result.count
+
+            # AI 분석 완료된 기사 수
+            scored_articles_result = (
+                self.client.client.table("articles")
+                .select("id", count="exact")
+                .not_.is_("clickbait_score", "null")
+                .execute()
+            )
+            scored_articles = scored_articles_result.count
+
+            return {
+                "total_journalists": total_journalists,
+                "active_journalists": active_journalists,
+                "scored_journalists": scored_journalists,
+                "total_articles": total_articles,
+                "scored_articles": scored_articles,
+                "pending_articles": total_articles - scored_articles,
+            }
+
+        except Exception as e:
+            logger.error(f"통계 요약 조회 오류: {e}")
+            return {}
+
+    def fix_inconsistent_stats(self) -> Dict[str, Any]:
+        """
+        통계 불일치 감지 및 수정 (Supabase 호환 방식)
+
+        Returns:
+            수정 결과 딕셔너리
+        """
+        try:
+            logger.info("통계 불일치 감지를 시작합니다...")
+
+            # 모든 기자 정보 조회
+            journalists_result = self.client.client.table("journalists").select("*").execute()
+            if not journalists_result.data:
+                logger.info("기자가 없습니다")
+                return {"fixed": 0, "total_checked": 0}
+
+            inconsistent_journalists = []
+            total_checked = 0
+
+            for journalist in journalists_result.data:
+                total_checked += 1
+                journalist_id = journalist["id"]
+                stored_count = journalist.get("article_count", 0)
+                stored_avg = journalist.get("avg_clickbait_score", 0.0)
+                stored_max = journalist.get("max_score", 0)
+
+                # 해당 기자의 실제 기사 통계 계산
+                articles_result = (
+                    self.client.client.table("articles")
+                    .select("clickbait_score")
+                    .eq("journalist_id", journalist_id)
+                    .execute()
+                )
+
+                # 실제 값 계산
+                actual_count = len(articles_result.data)
+                scored_articles = [
+                    article for article in articles_result.data if article["clickbait_score"] is not None
+                ]
+
+                if scored_articles:
+                    scores = [article["clickbait_score"] for article in scored_articles]
+                    actual_avg = sum(scores) / len(scores)
+                    actual_max = max(scores)
+                else:
+                    actual_avg = 0.0
+                    actual_max = 0
+
+                # 불일치 감지 (소수점 2자리까지 비교)
+                count_mismatch = stored_count != actual_count
+                avg_mismatch = abs(stored_avg - actual_avg) > 0.01
+                max_mismatch = stored_max != actual_max
+
+                if count_mismatch or avg_mismatch or max_mismatch:
+                    inconsistent_journalists.append(
+                        {
+                            "id": journalist_id,
+                            "name": journalist["name"],
+                            "publisher": journalist["publisher"],
+                            "stored_count": stored_count,
+                            "stored_avg": stored_avg,
+                            "stored_max": stored_max,
+                            "actual_count": actual_count,
+                            "actual_avg": actual_avg,
+                            "actual_max": actual_max,
+                        }
+                    )
+
+                    logger.warning(
+                        f"통계 불일치 발견: {journalist['name']} ({journalist['publisher']}) "
+                        f"- 저장된 값: {stored_count}/{stored_avg:.2f}/{stored_max} "
+                        f"- 실제 값: {actual_count}/{actual_avg:.2f}/{actual_max}"
+                    )
+
+            if not inconsistent_journalists:
+                logger.info("통계 불일치가 발견되지 않았습니다")
+                return {"fixed": 0, "total_checked": total_checked, "total_inconsistent": 0}
+
+            # 불일치 수정
+            fixed_count = 0
+            for journalist in inconsistent_journalists:
+                try:
+                    if self.update_journalist_stats_manual(journalist["id"]):
+                        fixed_count += 1
+                        logger.info(f"수정 완료: {journalist['name']} ({journalist['publisher']})")
+                    else:
+                        logger.error(f"수정 실패: {journalist['name']} ({journalist['publisher']})")
+                except Exception as e:
+                    logger.error(f"수정 중 오류 [{journalist['name']}]: {e}")
+
+            result = {
+                "fixed": fixed_count,
+                "total_inconsistent": len(inconsistent_journalists),
+                "total_checked": total_checked,
+            }
+
+            logger.info(f"통계 불일치 수정 완료: {fixed_count}/{len(inconsistent_journalists)}건")
+            return result
+
+        except Exception as e:
+            logger.error(f"통계 불일치 수정 오류: {e}")
+            return {"fixed": 0, "total_checked": 0, "error": str(e)}

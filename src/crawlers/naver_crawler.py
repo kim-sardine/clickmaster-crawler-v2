@@ -300,6 +300,11 @@ class NaverNewsCrawler:
                 journalist_name = crawl_result.reporter if crawl_result.reporter else "익명"
                 publisher = crawl_result.publisher if crawl_result.publisher else "네이버뉴스"
 
+            # 기자명 정규화 (빈 값이나 공백만 있는 경우 처리)
+            journalist_name = journalist_name.strip()
+            if not journalist_name or journalist_name in ["기자", "사용자"]:
+                journalist_name = "익명"
+
             # 기사 제목이 9자 미만이면 None 반환
             if len(title.strip()) < 9:
                 logger.debug(f"제목이 너무 짧음(9자 미만): {title}")

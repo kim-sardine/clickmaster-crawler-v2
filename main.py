@@ -30,7 +30,7 @@ def main():
         # 설정 검증
         if not settings.validate():
             logger.error("필수 환경변수가 설정되지 않았습니다")
-            logger.error("SUPABASE_URL, SUPABASE_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET이 필요합니다")
+            logger.error("SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET이 필요합니다")
             sys.exit(1)
 
         # 크롤러 초기화

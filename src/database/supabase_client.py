@@ -22,10 +22,10 @@ class SupabaseClient:
         load_dotenv()
 
         self.url = url or os.environ.get("SUPABASE_URL")
-        self.key = key or os.environ.get("SUPABASE_KEY")
+        self.key = key or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
         if not self.url or not self.key:
-            raise ValueError("SUPABASE_URL과 SUPABASE_KEY 환경변수가 필요합니다")
+            raise ValueError("SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY 환경변수가 필요합니다")
 
         self._client: Optional[Client] = None
 
