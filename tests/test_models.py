@@ -105,8 +105,6 @@ class TestJournalist:
         assert journalist.name == "홍길동"
         assert journalist.publisher == "조선일보"
         assert journalist.naver_uuid == "uuid123"
-        assert journalist.article_count == 0
-        assert journalist.average_score == 0.0
 
     def test_short_name_validation(self):
         """짧은 기자명 검증 테스트"""
@@ -120,15 +118,10 @@ class TestJournalist:
 
     def test_to_dict_conversion(self):
         """딕셔너리 변환 테스트"""
-        journalist = Journalist(
-            name="홍길동", publisher="조선일보", naver_uuid="uuid123", article_count=5, average_score=75.5, max_score=90
-        )
+        journalist = Journalist(name="홍길동", publisher="조선일보", naver_uuid="uuid123")
 
         result = journalist.to_dict()
 
         assert result["name"] == "홍길동"
         assert result["publisher"] == "조선일보"
         assert result["naver_uuid"] == "uuid123"
-        assert result["article_count"] == 5
-        assert result["average_score"] == 75.5
-        assert result["max_score"] == 90

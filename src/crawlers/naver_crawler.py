@@ -6,13 +6,14 @@ import requests
 import time
 import logging
 import html
+import re
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from urllib.parse import urljoin, urlparse, parse_qs
 from bs4 import BeautifulSoup
 import pytz
 
-from src.models.article import Article
+from src.models.article import Article, NaverNewsCrawlerResult
 from src.database.operations import DatabaseOperations
 
 logger = logging.getLogger(__name__)
@@ -71,15 +72,167 @@ class NaverNewsCrawler:
             logger.error(f"API 응답 파싱 실패: {e}")
             return []
 
-    def extract_article_content(self, naver_url: str) -> Optional[str]:
+    def get_title(self, soup: BeautifulSoup) -> str:
         """
-        네이버 뉴스 본문 추출
+        BeautifulSoup 객체에서 뉴스 제목 추출
+
+        Args:
+            soup: BeautifulSoup 객체
+
+        Returns:
+            뉴스 제목
+        """
+        title_area = soup.find("h2", id="title_area")
+        if title_area is None:
+            # 다른 제목 요소 타입 시도
+            title_area = soup.find("h2", class_="media_end_head_headline")
+            if title_area is None:
+                return ""
+        return title_area.text.strip()
+
+    def get_publisher(self, soup: BeautifulSoup) -> str:
+        """
+        BeautifulSoup 객체에서 언론사 이름 추출
+
+        Args:
+            soup: BeautifulSoup 객체
+
+        Returns:
+            언론사 이름
+        """
+        publisher_elements = soup.find_all("span", class_="media_end_head_top_logo_text")
+        if publisher_elements:
+            return publisher_elements[0].text.strip()
+
+        # 다른 언론사 요소 타입 시도
+        publisher_elements = soup.find_all("em", class_="media_end_linked_more_point")
+        if publisher_elements:
+            return publisher_elements[0].text.strip()
+
+        return ""
+
+    def get_reporter(self, soup: BeautifulSoup) -> str:
+        """
+        BeautifulSoup 객체에서 기자 이름 추출
+
+        Args:
+            soup: BeautifulSoup 객체
+
+        Returns:
+            기자 이름
+        """
+        # 기자 카드 스타일 추출 시도
+        journalistcard_items = soup.find_all("div", class_="media_journalistcard_item_inner")
+        if journalistcard_items:
+            reporters = []
+            for journalistcard_item in journalistcard_items:
+                reporter_elements = journalistcard_item.find_all("em", class_="media_journalistcard_summary_name_text")
+                if reporter_elements:
+                    reporter = reporter_elements[0].text
+                    reporter = reporter.replace("기자", "").strip()
+                    reporters.append(reporter)
+            if reporters:
+                return ",".join(reporters)
+
+        # 바이라인 스타일 추출 시도
+        bylines = soup.find_all("span", class_="byline_s")
+        if bylines:
+            reporter = bylines[0].text
+
+            # 패턴 1: 공백 뒤에 오는 이메일 주소 제거
+            pattern1 = r"\s+\S+@\S+\.\S+$"
+
+            # 패턴 2: 괄호 안의 이메일 주소와 괄호 제거
+            pattern2 = r"\s*\(\S+@\S+\.\S+\)"
+
+            # 패턴 3: 맨 뒤의 직함 제거
+            pattern3 = r"\s+(기자|인턴기자|인턴|캐스터|기상캐스터|PD|리포터|편집장|외신캐스터)$"
+
+            # 패턴 순차적으로 적용
+            reporter = re.sub(pattern1, "", reporter)
+            reporter = re.sub(pattern2, "", reporter)
+            reporter = re.sub(pattern3, "", reporter)
+
+            return reporter.strip()
+
+        return ""
+
+    def get_content(self, soup: BeautifulSoup) -> str:
+        """
+        BeautifulSoup 객체에서 뉴스 본문 추출
+
+        Args:
+            soup: BeautifulSoup 객체
+
+        Returns:
+            뉴스 본문
+        """
+        # 일반적인 네이버 뉴스 본문 요소 시도
+        article = soup.find("article", class_="_article_content")
+        if article:
+            return self.clean_content(article.text)
+
+        # 다른 본문 요소 타입 시도
+        article = soup.find("div", id="newsct_article")
+        if article:
+            return self.clean_content(article.text)
+
+        # 스포츠 뉴스 본문 요소 시도
+        article = soup.find("div", id="newsEndContents")
+        if article:
+            return self.clean_content(article.text)
+
+        # 기존 방식들도 시도
+        content_selectors = [
+            "#dic_area",  # 일반 뉴스
+            ".se-main-container",  # 스마트에디터
+            ".se-component-content",  # 스마트에디터 새 버전
+            ".news_end",  # 구버전
+            "#articleBodyContents",  # 구버전
+        ]
+
+        for selector in content_selectors:
+            content_elem = soup.select_one(selector)
+            if content_elem:
+                # 불필요한 태그 제거
+                for unwanted in content_elem.find_all(["script", "style"]):
+                    unwanted.decompose()
+
+                content = content_elem.get_text(strip=True)
+                return self.clean_content(content)
+
+        return ""
+
+    def clean_content(self, text: str) -> str:
+        """
+        본문 텍스트 정리
+
+        Args:
+            text: 원본 본문 텍스트
+
+        Returns:
+            정리된 텍스트
+        """
+        # 연속된 줄바꿈을 하나로 통합
+        text = re.sub(r"\n{2,}", "\n", text)
+        # 앞뒤 공백 제거
+        text = text.strip()
+
+        # 최대 700자로 제한
+        if len(text) > 700:
+            text = text[:700]
+
+        return text
+
+    def extract_article_content(self, naver_url: str) -> Optional[NaverNewsCrawlerResult]:
+        """
+        네이버 뉴스에서 제목, 기자명, 출판사명, 본문 추출
 
         Args:
             naver_url: 네이버 뉴스 URL
 
         Returns:
-            기사 본문 또는 None
+            크롤링 결과 객체 또는 None
         """
         try:
             response = self.session.get(naver_url, timeout=30)
@@ -87,31 +240,21 @@ class NaverNewsCrawler:
 
             soup = BeautifulSoup(response.content, "html.parser")
 
-            # 기사 본문 추출 (여러 패턴 시도)
-            content_selectors = [
-                "#dic_area",  # 일반 뉴스
-                ".se-main-container",  # 스마트에디터
-                ".se-component-content",  # 스마트에디터 새 버전
-                ".news_end",  # 구버전
-                "#articleBodyContents",  # 구버전
-            ]
+            title = self.get_title(soup)
+            content = self.get_content(soup)
+            reporter = self.get_reporter(soup)
+            publisher = self.get_publisher(soup)
 
-            content = None
-            for selector in content_selectors:
-                content_elem = soup.select_one(selector)
-                if content_elem:
-                    # 불필요한 태그 제거
-                    for unwanted in content_elem.find_all(["script", "style", "em", "strong"]):
-                        unwanted.decompose()
+            if not title or not content:
+                logger.warning(f"Failed to extract essential content from {naver_url}")
+                return None
 
-                    content = content_elem.get_text(strip=True)
-                    if len(content) >= 100:  # 최소 길이 체크
-                        break
-
-            if content and len(content) >= 100:
-                return content[:700]  # 최대 700자로 제한
-
-            return None
+            return NaverNewsCrawlerResult(
+                title=title,
+                content=content,
+                reporter=reporter,
+                publisher=publisher,
+            )
 
         except Exception as e:
             logger.error(f"본문 추출 실패 {naver_url}: {e}")
@@ -129,7 +272,7 @@ class NaverNewsCrawler:
         """
         try:
             # HTML 엔티티 디코딩 후 태그 제거
-            title = BeautifulSoup(html.unescape(item["title"]), "html.parser").get_text()
+            api_title = BeautifulSoup(html.unescape(item["title"]), "html.parser").get_text()
             description = BeautifulSoup(html.unescape(item["description"]), "html.parser").get_text()
 
             # 네이버 뉴스 URL인지 확인
@@ -138,12 +281,39 @@ class NaverNewsCrawler:
 
             naver_url = link if "news.naver.com" in link else None
             if not naver_url:
+                logger.debug(f"네이버 뉴스 링크가 아님: {link}")
                 return None
 
-            # 본문 추출
-            content = self.extract_article_content(naver_url)
-            if not content:
-                content = description  # 본문 추출 실패 시 요약 사용
+            # 상세 기사 정보 추출 (제목, 기자명, 출판사명, 본문)
+            crawl_result = self.extract_article_content(naver_url)
+
+            # 추출 실패 시 API 데이터 사용
+            if not crawl_result:
+                title = api_title
+                content = description
+                journalist_name = "익명"
+                publisher = "네이버뉴스"
+            else:
+                # 크롤링된 데이터 우선 사용, 빈 값이면 API 데이터로 대체
+                title = crawl_result.title if crawl_result.title else api_title
+                content = crawl_result.content if crawl_result.content else description
+                journalist_name = crawl_result.reporter if crawl_result.reporter else "익명"
+                publisher = crawl_result.publisher if crawl_result.publisher else "네이버뉴스"
+
+            # 기사 제목이 9자 미만이면 None 반환
+            if len(title.strip()) < 9:
+                logger.debug(f"제목이 너무 짧음(9자 미만): {title}")
+                return None
+
+            # 내용 길이 체크 및 제한
+            if len(content) < 100:
+                # 본문이 너무 짧으면 description을 추가
+                if len(content + " " + description) >= 100:
+                    content = content + " " + description
+                else:
+                    # 그래도 짧으면 None 반환
+                    logger.warning(f"내용이 너무 짧습니다: {title[:50]}...")
+                    return None
 
             # 발행시간 파싱
             pub_date_str = item["pubDate"]
@@ -153,14 +323,11 @@ class NaverNewsCrawler:
             kst = pytz.timezone("Asia/Seoul")
             pub_date = pub_date.astimezone(kst)
 
-            # 기자명과 언론사 추출 (간단한 패턴)
-            journalist_name = "익명"  # API에서는 기자명을 제공하지 않음
-
             article = Article(
                 title=title,
                 content=content,
                 journalist_name=journalist_name,
-                publisher="네이버뉴스",  # API 결과는 일반적으로 네이버뉴스로 처리
+                publisher=publisher,
                 published_at=pub_date,
                 naver_url=naver_url,
             )
@@ -168,16 +335,24 @@ class NaverNewsCrawler:
             return article
 
         except Exception as e:
-            logger.error(f"아이템 파싱 실패: {e}")
+            logger.error(f"기사 파싱 중 오류 발생: {e}")
             return None
 
-    def crawl_by_keywords(self, keywords: List[str], max_articles_per_keyword: int = 100) -> List[Article]:
+    def crawl_by_keywords(
+        self,
+        keywords: List[str],
+        max_articles_per_keyword: int = 100,
+        target_date: Optional[datetime] = None,
+        check_duplicates: bool = True,
+    ) -> List[Article]:
         """
         키워드별 뉴스 크롤링
 
         Args:
             keywords: 검색 키워드 리스트
             max_articles_per_keyword: 키워드당 최대 기사 수
+            target_date: 특정 날짜 필터링 (None이면 모든 날짜)
+            check_duplicates: 중복 기사 체크 여부 (기본값: True)
 
         Returns:
             크롤링된 기사 리스트
@@ -186,25 +361,87 @@ class NaverNewsCrawler:
 
         for keyword in keywords:
             logger.info(f"키워드 크롤링 시작: {keyword}")
+            if target_date:
+                logger.info(f"대상 날짜 필터링: {target_date.strftime('%Y-%m-%d')}")
+            if not check_duplicates:
+                logger.info("중복 체크 비활성화 모드")
 
             try:
-                # API 검색
-                items = self.search_news_api(query=keyword, display=min(max_articles_per_keyword, 100), sort="date")
+                keyword_articles = []
+                start = 1
+                display = min(100, max_articles_per_keyword)  # API 최대 100개씩 요청
 
-                # 기사 파싱
-                for item in items:
-                    article = self.parse_api_item(item)
-                    if article:
-                        # 중복 체크
-                        if not self.db_ops.check_duplicate_article(article.naver_url):
-                            all_articles.append(article)
+                while len(keyword_articles) < max_articles_per_keyword:
+                    # API 검색 (날짜순 정렬)
+                    items = self.search_news_api(query=keyword, display=display, start=start, sort="date")
+
+                    if not items:
+                        logger.info(f"더 이상 검색 결과가 없습니다: {keyword}")
+                        break
+
+                    current_batch_articles = []
+                    should_stop = False
+
+                    # 기사 파싱 및 날짜 필터링
+                    for item in items:
+                        article = self.parse_api_item(item)
+                        if not article:
+                            continue
+
+                        # 날짜 필터링
+                        if target_date:
+                            article_date = article.published_at.date()
+                            target_date_only = target_date.date()
+
+                            # 대상 날짜보다 과거면 중단
+                            if article_date < target_date_only:
+                                logger.info(
+                                    f"과거 날짜 도달 ({article_date}), 대상 날짜: {target_date_only} - 크롤링 중단"
+                                )
+                                should_stop = True
+                                break
+
+                            # 대상 날짜와 일치하지 않으면 스킵
+                            if article_date != target_date_only:
+                                continue
+
+                        # 중복 체크 (check_duplicates가 True일 때만)
+                        if check_duplicates:
+                            if not self.db_ops.check_duplicate_article(article.naver_url):
+                                current_batch_articles.append(article)
+                            else:
+                                logger.debug(f"중복 기사 스킵: {article.title[:50]}...")
                         else:
-                            logger.debug(f"중복 기사 스킵: {article.title[:50]}...")
+                            # 중복 체크 없이 모든 기사 추가
+                            current_batch_articles.append(article)
 
-                    # Rate limiting
-                    time.sleep(0.1)
+                        # 최대 개수 도달하면 중단
+                        if len(keyword_articles) + len(current_batch_articles) >= max_articles_per_keyword:
+                            should_stop = True
+                            break
 
-                logger.info(f"키워드 '{keyword}' 크롤링 완료: {len([a for a in all_articles if keyword in str(a)])}개")
+                        # Rate limiting
+                        time.sleep(0.1)
+
+                    keyword_articles.extend(current_batch_articles)
+
+                    # 중단 조건 체크
+                    if should_stop:
+                        break
+
+                    # 다음 페이지로
+                    start += display
+
+                    # API 제한 (최대 1000개까지)
+                    if start > 1000:
+                        logger.warning(f"API 검색 제한 도달: {keyword}")
+                        break
+
+                    # 페이지 간 대기
+                    time.sleep(1)
+
+                all_articles.extend(keyword_articles)
+                logger.info(f"키워드 '{keyword}' 크롤링 완료: {len(keyword_articles)}개")
 
                 # 키워드 간 대기
                 time.sleep(1)
@@ -216,20 +453,28 @@ class NaverNewsCrawler:
         logger.info(f"전체 크롤링 완료: {len(all_articles)}개 기사")
         return all_articles
 
-    def crawl_and_save(self, keywords: List[str], max_articles_per_keyword: int = 100) -> int:
+    def crawl_and_save(
+        self, keywords: List[str], max_articles_per_keyword: int = 100, target_date: Optional[datetime] = None
+    ) -> int:
         """
         뉴스 크롤링 및 데이터베이스 저장
 
         Args:
             keywords: 검색 키워드 리스트
             max_articles_per_keyword: 키워드당 최대 기사 수
+            target_date: 특정 날짜 필터링 (None이면 모든 날짜)
 
         Returns:
             저장된 기사 수
         """
         try:
-            # 크롤링
-            articles = self.crawl_by_keywords(keywords, max_articles_per_keyword)
+            # 크롤링 (중복 체크 포함)
+            articles = self.crawl_by_keywords(
+                keywords=keywords,
+                max_articles_per_keyword=max_articles_per_keyword,
+                target_date=target_date,
+                check_duplicates=True,
+            )
 
             if not articles:
                 logger.warning("크롤링된 기사가 없습니다")

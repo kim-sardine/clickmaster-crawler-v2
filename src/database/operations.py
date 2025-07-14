@@ -154,14 +154,14 @@ class DatabaseOperations:
             logger.error(f"미처리 기사 조회 오류: {e}")
             return []
 
-    def update_article_score(self, article_id: str, clickbait_score: int, score_explanation: str) -> bool:
+    def update_article_score(self, article_id: str, clickbait_score: int, clickbait_explanation: str) -> bool:
         """
         기사 낚시 점수 업데이트
 
         Args:
             article_id: 기사 ID
             clickbait_score: 낚시 점수 (0-100)
-            score_explanation: 점수 설명
+            clickbait_explanation: 점수 설명
 
         Returns:
             업데이트 성공 여부
@@ -172,7 +172,7 @@ class DatabaseOperations:
                 .update(
                     {
                         "clickbait_score": clickbait_score,
-                        "score_explanation": score_explanation,
+                        "clickbait_explanation": clickbait_explanation,
                         "updated_at": datetime.now().isoformat(),
                     }
                 )
