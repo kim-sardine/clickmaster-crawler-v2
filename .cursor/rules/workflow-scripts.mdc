@@ -1,20 +1,16 @@
----
-globs: "scripts/*"
-description: "독립 실행 워크플로우 스크립트 가이드"
----
 
 # 워크플로우 스크립트 가이드
 
-## 📋 스크립트 구조
+## 📋 스크립트 구조 ✅ 구현완료
 
-### 독립 실행 원칙
-각 스크립트는 다음 조건을 만족해야 합니다:
+### 독립 실행 원칙 (모든 스크립트에 적용됨)
+각 스크립트는 다음 조건을 만족합니다:
 - **독립성**: 다른 스크립트에 의존하지 않고 실행 가능
 - **멱등성**: 여러 번 실행해도 안전한 결과
 - **로깅**: 실행 과정과 결과를 상세히 기록
 - **에러 핸들링**: 실패 시 적절한 복구 메커니즘
 
-### 공통 구조 템플릿
+### 공통 구조 템플릿 ✅ 구현완료
 ```python
 #!/usr/bin/env python3
 """
@@ -25,27 +21,38 @@ import sys
 import logging
 import argparse
 from datetime import datetime
+from pathlib import Path
+
+# 프로젝트 루트를 Python 경로에 추가
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.config.settings import settings
 
 # 로깅 설정
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=getattr(logging, settings.LOG_LEVEL),
+    format=settings.LOG_FORMAT,
     handlers=[
-        logging.FileHandler(f'logs/{__name__}_{datetime.now().strftime("%Y%m%d")}.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
+        logging.FileHandler(f"logs/{스크립트명}_{datetime.now().strftime('%Y%m%d')}.log"),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
 logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description='스크립트 설명')
-    parser.add_argument('--date', help='처리 날짜 (YYYY-MM-DD)')
-    parser.add_argument('--dry-run', action='store_true', help='실제 실행 없이 테스트')
-    
+    # 각 스크립트별 고유 인자들
     args = parser.parse_args()
     
     try:
         logger.info(f"스크립트 시작: {__name__}")
+        
+        # 환경변수 검증
+        if not settings.validate():
+            logger.error("필수 환경변수가 설정되지 않았습니다")
+            sys.exit(1)
+        
         # 메인 로직
         logger.info("스크립트 완료")
     except Exception as e:
@@ -56,63 +63,99 @@ if __name__ == "__main__":
     main()
 ```
 
-## 🔄 주요 스크립트
+## 🔄 구현된 스크립트들
 
-### 1. crawl_news.py
+### 1. crawl_news.py ✅ 구현완료
 ```bash
-python scripts/crawl_news.py --date 2024-01-15 --source api
-python scripts/crawl_news.py --date 2024-01-15 --source entertain
+python scripts/crawl_news.py --date 2024-01-15
+python scripts/crawl_news.py --date 2024-01-15 --dry-run
+python scripts/crawl_news.py --date 2024-01-15 --keywords 충격 반전 --max-per-keyword 50
 ```
 
-**기능:**
-- 지정된 날짜의 네이버 뉴스 크롤링
-- 소스 선택 (api/entertain)
+**구현된 기능:**
+- 날짜 파라미터 검증 (필수, 최근 3개월 이내)
+- 기본 키워드 또는 커스텀 키워드 지원
+- Dry-run 모드 (실제 저장 없이 테스트)
 - 중복 체크 및 데이터 검증
 - Supabase 저장
+- 상세한 로깅 및 성능 추적
 
-### 2. process_openai_batch.py
+**주요 파라미터:**
+- `--date`: 크롤링 날짜 (YYYY-MM-DD, 필수)
+- `--keywords`: 검색 키워드 목록 (기본값: settings.DEFAULT_KEYWORDS)
+- `--max-per-keyword`: 키워드당 최대 기사 수 (기본값: 100)
+- `--dry-run`: 테스트 모드 (저장 안함)
+
+### 2. sync_journalist_stats.py ✅ 구현완료
 ```bash
+python scripts/sync_journalist_stats.py
+python scripts/sync_journalist_stats.py --fix-inconsistencies
+python scripts/sync_journalist_stats.py --full-update
+python scripts/sync_journalist_stats.py --log-level DEBUG
+```
+
+**구현된 기능:**
+- 기자 통계 자동 동기화
+- 통계 불일치 감지 및 수정
+- 전체 기자 통계 강제 업데이트
+- 상세한 결과 요약 출력
+- 실행 결과 성능 추적
+
+**주요 파라미터:**
+- `--log-level`: 로그 레벨 설정 (DEBUG, INFO, WARNING, ERROR)
+- `--fix-inconsistencies`: 통계 불일치 수정 (기본값: True)
+- `--no-fix-inconsistencies`: 통계 불일치 수정 비활성화
+- `--full-update`: 모든 기자 통계 강제 업데이트
+- `--quiet`: 요약 출력 생략
+
+## 🚧 미구현 스크립트들 (향후 개발 예정)
+
+### 3. process_openai_batch.py ❌ 미구현
+```bash
+# 향후 구현 예정
 python scripts/process_openai_batch.py --create-batch
 python scripts/process_openai_batch.py --batch-id batch_abc123
 ```
 
-**기능:**
+**계획된 기능:**
 - 미처리 기사 조회
 - OpenAI Batch API 요청 생성
 - 배치 상태 추적
 
-### 3. monitor_batches.py
+### 4. monitor_batches.py ❌ 미구현
 ```bash
+# 향후 구현 예정
 python scripts/monitor_batches.py --check-all
 python scripts/monitor_batches.py --batch-id batch_abc123
 ```
 
-**기능:**
+**계획된 기능:**
 - 진행중인 배치 상태 확인
 - 완료된 배치 알림
 - 실패한 배치 재시도
 
-### 4. process_completed_batches.py
+### 5. process_completed_batches.py ❌ 미구현
 ```bash
+# 향후 구현 예정
 python scripts/process_completed_batches.py --batch-id batch_abc123
 python scripts/process_completed_batches.py --auto-process
 ```
 
-**기능:**
+**계획된 기능:**
 - 완료된 배치 결과 다운로드
 - 응답 파싱 및 점수 추출
 - 기사 데이터 업데이트
 
-## 📊 로깅 및 모니터링
+## 📊 로깅 및 모니터링 ✅ 구현완료
 
 ### 로그 레벨 정의
 - **DEBUG**: 상세한 디버깅 정보
-- **INFO**: 일반적인 실행 정보
+- **INFO**: 일반적인 실행 정보 (기본값)
 - **WARNING**: 경고 메시지
 - **ERROR**: 오류 발생
 - **CRITICAL**: 치명적인 오류
 
-### 로그 포맷
+### 로그 포맷 ✅ 구현완료
 ```
 2024-01-15 10:30:45 - crawl_news - INFO - 크롤링 시작: 2024-01-15
 2024-01-15 10:30:47 - crawl_news - INFO - 처리된 기사 수: 150
@@ -120,26 +163,53 @@ python scripts/process_completed_batches.py --auto-process
 2024-01-15 10:30:50 - crawl_news - INFO - 크롤링 완료: 2024-01-15
 ```
 
-### 성능 지표 추적
-```python
-import time
-from functools import wraps
+### 로그 파일 관리 ✅ 구현완료
+- 일별 로그 파일 자동 생성: `logs/{스크립트명}_YYYYMMDD.log`
+- 콘솔과 파일 동시 출력
+- UTF-8 인코딩 지원
+- logs 디렉토리 자동 생성
 
-def track_performance(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        execution_time = time.time() - start_time
-        logger.info(f"{func.__name__} 실행 시간: {execution_time:.2f}초")
-        return result
-    return wrapper
+### 성능 지표 추적 ✅ 구현완료
+```python
+# sync_journalist_stats.py에서 구현됨
+def print_result_summary(result: dict):
+    """실행 결과 요약 출력"""
+    start_time = datetime.fromisoformat(result["start_time"])
+    end_time = datetime.fromisoformat(result["end_time"])
+    duration = end_time - start_time
+    
+    print(f"🕐 실행 시간: {duration.total_seconds():.2f}초")
+    print(f"✅ 성공 여부: {'성공' if result['success'] else '실패'}")
+    # 상세 통계 출력...
 ```
 
-## 🛠️ 에러 핸들링
+## 🛠️ 에러 핸들링 ✅ 구현완료
 
-### 재시도 메커니즘
+### 환경변수 검증 ✅ 구현완료
 ```python
+# 모든 스크립트에서 공통 적용
+if not settings.validate():
+    logger.error("필수 환경변수가 설정되지 않았습니다")
+    logger.error("SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET이 필요합니다")
+    sys.exit(1)
+```
+
+### 예외 처리 ✅ 구현완료
+```python
+try:
+    # 메인 로직 실행
+    logger.info("스크립트 완료")
+except ValueError as e:
+    logger.error(f"입력값 오류: {e}")
+    sys.exit(1)
+except Exception as e:
+    logger.error(f"스크립트 실행 중 오류: {e}")
+    sys.exit(1)
+```
+
+### 재시도 메커니즘 ❌ 미구현 (향후 추가 예정)
+```python
+# 향후 구현 예정
 import time
 import random
 
@@ -158,71 +228,43 @@ def retry_with_backoff(max_retries=3, base_delay=1, max_delay=60):
                     delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
                     logger.warning(f"재시도 {attempt + 1}/{max_retries} in {delay:.2f}초: {e}")
                     time.sleep(delay)
-            return None
         return wrapper
     return decorator
 ```
 
-### 알림 시스템
-```python
-def send_notification(message, level='info'):
-    """알림 발송 (슬랙, 이메일 등)"""
-    if level == 'error':
-        # 에러 알림 발송
-        pass
-    elif level == 'warning':
-        # 경고 알림 발송
-        pass
-```
-
-## 🔒 보안 및 설정
+## 🔒 보안 및 설정 ✅ 구현완료
 
 ### 환경 변수 관리
 ```python
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
+# src/config/settings.py에서 중앙 관리
+from src.config.settings import settings
 
 REQUIRED_ENV_VARS = [
     'SUPABASE_URL',
     'SUPABASE_SERVICE_ROLE_KEY',
-    'OPENAI_API_KEY',
     'NAVER_CLIENT_ID',
     'NAVER_CLIENT_SECRET'
 ]
 
+# 자동 검증 로직 포함
 def validate_environment():
-    missing = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
-    if missing:
-        logger.error(f"필수 환경변수 누락: {missing}")
-        sys.exit(1)
+    return settings.validate()
 ```
 
-### 설정 파일 검증
-```python
-def validate_config():
-    """설정 파일 유효성 검사"""
-    required_configs = ['batch_size', 'max_retries', 'timeout']
-    # 검증 로직
-```
+## 📅 스케줄링 ❌ 미구현 (향후 GitHub Actions로 구현 예정)
 
-## 📅 스케줄링
-
-### Cron 설정 예시
+### Cron 설정 예시 (계획)
 ```bash
 # 매일 오전 9시 뉴스 크롤링
 0 9 * * * /usr/bin/python3 /path/to/scripts/crawl_news.py --date $(date +\%Y-\%m-\%d)
 
-# 매 10분마다 배치 모니터링
-*/10 * * * * /usr/bin/python3 /path/to/scripts/monitor_batches.py --check-all
-
-# 매 30분마다 완료된 배치 처리
-*/30 * * * * /usr/bin/python3 /path/to/scripts/process_completed_batches.py --auto-process
+# 매일 자정 기자 통계 동기화
+0 0 * * * /usr/bin/python3 /path/to/scripts/sync_journalist_stats.py
 ```
 
-### GitHub Actions 통합
+### GitHub Actions 통합 ❌ 미구현 (향후 구현 예정)
 ```yaml
+# 향후 구현 예정
 name: Daily News Crawling
 on:
   schedule:
@@ -233,6 +275,28 @@ jobs:
   crawl:
     runs-on: ubuntu-latest
     steps:
+      - name: Crawl News
+        run: python scripts/crawl_news.py --date $(date +%Y-%m-%d)
+```
+
+## 📈 현재 구현 상태 요약
+
+### ✅ 완료된 스크립트
+1. **crawl_news.py**: 네이버 뉴스 크롤링 (완전 구현)
+2. **sync_journalist_stats.py**: 기자 통계 동기화 (완전 구현)
+
+### ❌ 미구현 스크립트 (우선순위 순)
+1. **process_openai_batch.py**: OpenAI 배치 생성
+2. **monitor_batches.py**: 배치 상태 모니터링  
+3. **process_completed_batches.py**: 배치 결과 처리
+4. **backup_data.py**: 데이터 백업
+
+### 🔄 개선 계획
+1. OpenAI Batch API 통합 완료
+2. GitHub Actions 워크플로우 구현
+3. 고급 에러 핸들링 및 재시도 로직
+4. 알림 시스템 (슬랙, 이메일) 통합
+
       - name: Crawl News
                  run: python scripts/crawl_news.py --date $(date +%Y-%m-%d)
 ```

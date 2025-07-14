@@ -1,19 +1,28 @@
----
-globs: "src/core/*,scripts/process_completed_batches.py,scripts/monitor_batches.py"
-description: "OpenAI Batch API 처리 로직 구현 가이드"
----
 
 # OpenAI Batch API 처리 로직
 
-## 🤖 OpenAI Batch API 개요
+## 🚧 현재 구현 상태
 
-### API 워크플로우
+### ✅ 준비된 부분
+- `src/config/settings.py`에 `OPENAI_API_KEY` 환경변수 설정
+- `src/database/operations.py`에 `get_unprocessed_articles()` 메서드 구현
+- `src/database/operations.py`에 `update_article_score()` 메서드 구현
+
+### ❌ 미구현 부분 (향후 개발 필요)
+- `src/core/` 디렉토리 및 OpenAI 배치 처리 로직
+- OpenAI 관련 스크립트들
+- 배치 상태 관리 테이블 및 로직
+- 프롬프트 관리 시스템
+
+## 🤖 OpenAI Batch API 개요 (구현 예정)
+
+### API 워크플로우 계획
 1. **배치 생성** → 입력 데이터 파일 업로드
 2. **배치 실행** → 백그라운드에서 처리
 3. **상태 모니터링** → 주기적으로 상태 확인
 4. **결과 다운로드** → 완료 시 결과 파일 다운로드
 
-### 배치 상태 관리
+### 배치 상태 관리 (구현 예정)
 - `validating`: 입력 검증 중
 - `in_progress`: 처리 진행 중
 - `finalizing`: 처리 완료 중
@@ -22,29 +31,30 @@ description: "OpenAI Batch API 처리 로직 구현 가이드"
 - `expired`: 만료
 - `cancelled`: 취소
 
-## 📝 프롬프트 설계
+## 📝 프롬프트 설계 (구현 예정)
 
 ### Clickbait 점수 측정 프롬프트
 > **참고**: 실제 프롬프트 내용은 `keywords-config.mdc`의 **기본 Clickbait 판별 프롬프트** 섹션을 참조하세요.
 
-**프롬프트 주요 특징:**
+**프롬프트 주요 특징 (계획):**
 - 5단계 체계적 분석 과정
 - 0-100 점수 구간별 평가 기준
 - 출력 형식: `score : [정수]`, `reason : [설명]`
 - 본문 내용 제한: 최대 700자
 
-### 프롬프트 템플릿 관리
+### 프롬프트 템플릿 관리 (미구현)
 > **참고**: 프롬프트 버전 관리, A/B 테스트, 언론사별 특화 프롬프트 등은 `keywords-config.mdc`를 참조하세요.
 
-**배치 처리에서의 프롬프트 사용법:**
-- `src/config/prompts.py`에서 프롬프트 로드
+**배치 처리에서의 프롬프트 사용법 (계획):**
+- `src/config/prompts.py`에서 프롬프트 로드 (미구현)
 - 배치 생성 시 프롬프트 버전 선택
 - 프롬프트 템플릿에 `{title}`, `{content}` 변수 삽입
 
-## 🔧 배치 처리 구현
+## 🔧 배치 처리 구현 계획
 
-### 입력 데이터 처리
+### 입력 데이터 처리 (미구현)
 ```python
+# src/core/batch_processor.py (미구현)
 import re
 
 def prepare_articles_for_batch(articles):
@@ -74,11 +84,12 @@ def prepare_articles_for_batch(articles):
     return processed_articles
 ```
 
-### 배치 생성 로직
+### 배치 생성 로직 (미구현)
 ```python
+# src/core/batch_creator.py (미구현)
 def create_batch_request(articles, prompt_version="v1.1"):
     """배치 요청 생성"""
-    from src.config.prompts import get_prompt_template
+    from src.config.prompts import get_prompt_template  # 미구현
     
     prompt_template = get_prompt_template(prompt_version)
     batch_requests = []
@@ -121,10 +132,11 @@ def create_batch_request(articles, prompt_version="v1.1"):
 - 입력 파일 크기 제한 (100MB)
 - 중복 제거 및 검증
 
-## 📊 상태 모니터링
+## 📊 상태 모니터링 (미구현)
 
-### 배치 상태 테이블
+### 배치 상태 테이블 (미구현)
 ```sql
+-- 향후 Supabase에 생성 예정
 CREATE TABLE batch_status (
   id UUID PRIMARY KEY,
   batch_id TEXT UNIQUE NOT NULL,
@@ -140,15 +152,16 @@ CREATE TABLE batch_status (
 );
 ```
 
-### 모니터링 주기
+### 모니터링 주기 (계획)
 - **진행 중**: 10분마다 상태 확인
 - **완료됨**: 즉시 결과 처리
 - **실패**: 에러 로그 기록 및 알림
 
-## 🔄 결과 처리
+## 🔄 결과 처리 (미구현)
 
-### 출력 데이터 파싱
+### 출력 데이터 파싱 (미구현)
 ```python
+# src/core/result_parser.py (미구현)
 def parse_batch_result(result_line):
     """배치 결과 파싱"""
     data = json.loads(result_line)
@@ -161,8 +174,9 @@ def parse_batch_result(result_line):
         return handle_error(data['response'])
 ```
 
-### 점수 파싱 규칙
+### 점수 파싱 규칙 (미구현)
 ```python
+# src/core/score_parser.py (미구현)
 import re
 
 def parse_clickbait_score(content):
@@ -194,7 +208,66 @@ def parse_clickbait_score(content):
 - 점수 범위 벗어남 시 재검증 요청
 - 응답 형식 불일치 시 로그 기록
 
-## 🛠️ 에러 핸들링
+## 🚧 미구현 스크립트들
+
+### 1. process_openai_batch.py (미구현)
+```bash
+# 향후 구현 예정
+python scripts/process_openai_batch.py --create-batch
+python scripts/process_openai_batch.py --batch-id batch_abc123
+```
+
+**계획된 기능:**
+- 미처리 기사 조회 (✅ `get_unprocessed_articles()` 기반)
+- OpenAI Batch API 요청 생성
+- 배치 상태 추적
+
+### 2. monitor_batches.py (미구현)
+```bash
+# 향후 구현 예정
+python scripts/monitor_batches.py --check-all
+python scripts/monitor_batches.py --batch-id batch_abc123
+```
+
+**계획된 기능:**
+- 진행중인 배치 상태 확인
+- 완료된 배치 알림
+- 실패한 배치 재시도
+
+### 3. process_completed_batches.py (미구현)
+```bash
+# 향후 구현 예정
+python scripts/process_completed_batches.py --batch-id batch_abc123
+python scripts/process_completed_batches.py --auto-process
+```
+
+**계획된 기능:**
+- 완료된 배치 결과 다운로드
+- 응답 파싱 및 점수 추출 (✅ `update_article_score()` 기반)
+- 기사 데이터 업데이트
+
+## ✅ 현재 활용 가능한 기반 기능
+
+### 미처리 기사 조회 (구현완료)
+```python
+from src.database.operations import DatabaseOperations
+
+db_ops = DatabaseOperations()
+unprocessed = db_ops.get_unprocessed_articles(limit=1000)
+print(f"미처리 기사: {len(unprocessed)}개")
+```
+
+### 점수 업데이트 (구현완료)
+```python
+# 기사별 점수 업데이트
+success = db_ops.update_article_score(
+    article_id="uuid-here",
+    clickbait_score=75,
+    clickbait_explanation="제목이 내용과 일치하지 않아 낚시성이 높음"
+)
+```
+
+## 🛠️ 에러 핸들링 (계획)
 
 ### 배치 실패 처리
 - **부분 실패**: 성공한 결과만 처리
@@ -206,7 +279,7 @@ def parse_clickbait_score(content):
 - 입력 데이터 검증 강화
 - 토큰 사용량 모니터링
 
-## 💰 비용 관리
+## 💰 비용 관리 (계획)
 
 ### 토큰 사용량 추적
 - 입력 토큰 수 계산
@@ -214,6 +287,37 @@ def parse_clickbait_score(content):
 - 일일/월간 비용 한도 설정
 
 ### 최적화 전략
+- 프롬프트 길이 최적화
+- 배치 크기 조정
+- 모델 선택 최적화 (gpt-4o-mini 사용)
+
+## 📋 구현 우선순위
+
+### Phase 1: 프롬프트 시스템 (미구현)
+1. `src/config/prompts.py` 생성
+2. 프롬프트 템플릿 관리
+3. 프롬프트 버전 관리
+
+### Phase 2: 핵심 배치 로직 (미구현)
+1. `src/core/` 디렉토리 생성
+2. 배치 생성 로직
+3. 결과 파싱 로직
+
+### Phase 3: 스크립트 구현 (미구현)
+1. `process_openai_batch.py`
+2. `monitor_batches.py`
+3. `process_completed_batches.py`
+
+### Phase 4: 고급 기능 (미구현)
+1. 배치 상태 테이블
+2. 에러 핸들링 및 재시도
+3. 비용 모니터링
+
+## 🔗 관련 문서
+- `keywords-config.mdc`: 프롬프트 상세 내용
+- `database-schema.mdc`: 배치 상태 테이블 스키마
+- `github-workflows.mdc`: 자동화 워크플로우
+
 - 프롬프트 길이 최적화
 - 배치 크기 조정
 - 모델 선택 최적화 (gpt-4o-mini 사용)

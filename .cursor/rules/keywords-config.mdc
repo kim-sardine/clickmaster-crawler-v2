@@ -1,43 +1,43 @@
----
-globs: "src/config/*"
-description: "키워드 설정 및 프롬프트 관리 가이드"
----
 
 # 키워드 설정 및 프롬프트 관리
 
+## 🚧 현재 구현 상태
+
+### ✅ 구현완료
+- `src/config/settings.py`에 기본 키워드 설정
+- 환경변수를 통한 설정 관리
+- 키워드별 최대 기사 수 제한
+
+### ❌ 미구현 부분
+- `src/config/prompts.py` 미생성
+- 확장 키워드 관리 시스템
+- 프롬프트 버전 관리
+- A/B 테스트 시스템
+
 ## 🔍 검색 키워드 설정
 
-### 기본 키워드 목록
+### 기본 키워드 목록 ✅ 구현완료
 ```python
-SEARCH_KEYWORDS = [
-    "충격",      # 충격적인 사건, 뉴스
-    "공포",      # 공포감을 조성하는 내용
-    "반전",      # 예상치 못한 전개
-]
+# src/config/settings.py에서 구현됨
+DEFAULT_KEYWORDS = ["충격", "공포", "반전", "놀라운", "경악"]
+MAX_ARTICLES_PER_KEYWORD = 100
+CRAWL_DELAY_SECONDS = 0.5
 ```
 
-### 키워드 확장 전략
-```python
-EXTENDED_KEYWORDS = {
-    "충격": ["충격적인", "충격발", "충격적 사실", "충격 실화"],
-    "공포": ["공포의", "무서운", "소름끼치는", "경악"],
-    "반전": ["반전드라마", "반전 결말", "뒤바뀐", "역전"]
-}
+**현재 사용법:**
+```bash
+# 기본 키워드 사용
+python scripts/crawl_news.py --date 2024-01-15
+
+# 커스텀 키워드 사용
+python scripts/crawl_news.py --date 2024-01-15 --keywords 충격 반전 --max-per-keyword 50
 ```
 
-### 언론사별 특화 키워드
-```python
-PUBLISHER_KEYWORDS = {
-    "스포츠": ["이변", "파격", "사상초유", "전무후무"],
-    "연예": ["폭로", "고백", "스캔들", "화제"],
-    "정치": ["파문", "논란", "갈등", "대립"]
-}
-```
+## 📝 프롬프트 템플릿 ❌ 전체 미구현
 
-## 📝 프롬프트 템플릿
-
-### 기본 Clickbait 판별 프롬프트
+### 기본 Clickbait 판별 프롬프트 (미구현)
 ```python
+# src/config/prompts.py (미구현)
 CLICKBAIT_PROMPT = """
 당신은 뉴스의 제목과 내용을 분석하여 클릭베이트 여부를 판단하는 전문가입니다.
 주어진 뉴스 제목과 본문 내용을 분석하여 해당 기사의 제목이 클릭베이트인지 여부를 판단하고, 그 정도를 0에서 100 사이의 정수로 평가해주세요.
@@ -96,8 +96,9 @@ reason : [2~3줄의 간단한 설명. 한국어로 작성. 존댓말 사용.]
 """
 ```
 
-### 언론사별 특화 프롬프트
+### 언론사별 특화 프롬프트 ❌ 미구현 (향후 계획)
 ```python
+# src/config/prompts.py (미구현)
 PUBLISHER_SPECIFIC_PROMPTS = {
     "스포츠": """
 스포츠 뉴스의 낚시성을 평가합니다.
@@ -116,29 +117,31 @@ PUBLISHER_SPECIFIC_PROMPTS = {
 }
 ```
 
-## 🎯 프롬프트 최적화
+## 🎯 프롬프트 최적화 ❌ 미구현
 
-### 토큰 효율성
+### 토큰 효율성 (향후 구현)
 ```python
+# src/config/prompts.py (미구현)
 import re
 
 def optimize_prompt_tokens(title, content):
     """프롬프트 토큰 수 최적화"""
-    # 내용 길이 제한 (500자)
-    if len(content) > 500:
-        content = content[:500] + "..."
+    # 내용 길이 제한 (700자) - 현재 크롤러에서 처리됨
+    if len(content) > 700:
+        content = content[:700] + "..."
     
-    # 불필요한 HTML 태그 제거
+    # 불필요한 HTML 태그 제거 - 현재 크롤러에서 처리됨
     content = re.sub(r'<[^>]+>', '', content)
     
-    # 중복 공백 제거
+    # 중복 공백 제거 - 현재 크롤러에서 처리됨
     content = re.sub(r'\s+', ' ', content).strip()
     
     return title, content
 ```
 
-### 프롬프트 버전 관리
+### 프롬프트 버전 관리 ❌ 미구현 (향후 계획)
 ```python
+# src/config/prompts.py (미구현)
 PROMPT_VERSIONS = {
     "v1.0": CLICKBAIT_PROMPT,
     "v1.1": """개선된 프롬프트 내용...""",
@@ -146,12 +149,18 @@ PROMPT_VERSIONS = {
 }
 
 CURRENT_PROMPT_VERSION = "v1.1"
+
+def get_prompt_template(version=None):
+    """프롬프트 템플릿 반환"""
+    version = version or CURRENT_PROMPT_VERSION
+    return PROMPT_VERSIONS.get(version, PROMPT_VERSIONS[CURRENT_PROMPT_VERSION])
 ```
 
-## 📊 점수 해석 기준
+## 📊 점수 해석 기준 ❌ 미구현
 
-### 점수 구간별 분류
+### 점수 구간별 분류 (향후 구현)
 ```python
+# src/config/scoring.py (미구현)
 SCORE_CATEGORIES = {
     "낮음": {
         "range": (0, 30),
@@ -169,10 +178,18 @@ SCORE_CATEGORIES = {
         "description": "강한 낚시성 요소 포함"
     }
 }
+
+def get_score_category(score):
+    """점수에 따른 카테고리 반환"""
+    for category, info in SCORE_CATEGORIES.items():
+        if info["range"][0] <= score <= info["range"][1]:
+            return category, info
+    return "알 수 없음", {}
 ```
 
-### 언론사별 점수 기준
+### 언론사별 점수 기준 ❌ 미구현 (향후 계획)
 ```python
+# src/config/scoring.py (미구현)
 PUBLISHER_SCORE_ADJUSTMENTS = {
     "스포츠": {
         "base_adjustment": -5,  # 스포츠 뉴스는 기본적으로 자극적
@@ -187,10 +204,25 @@ PUBLISHER_SCORE_ADJUSTMENTS = {
 
 ## 🔧 설정 관리
 
-### 환경별 설정
+### 환경별 설정 ✅ 부분 구현
 ```python
+# src/config/settings.py (현재 구현된 부분)
 import os
 
+class Settings:
+    # 크롤링 설정
+    DEFAULT_KEYWORDS = ["충격", "공포", "반전", "놀라운", "경악"]
+    MAX_ARTICLES_PER_KEYWORD = 100
+    CRAWL_DELAY_SECONDS = 0.5
+
+    # 로깅 설정
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+```
+
+### 확장 설정 관리 ❌ 미구현 (향후 계획)
+```python
+# src/config/settings.py (향후 확장)
 class Config:
     def __init__(self):
         self.env = os.getenv('ENV', 'development')
@@ -207,8 +239,9 @@ class Config:
             self.temperature = 0.0
 ```
 
-### 키워드 업데이트 전략
+### 키워드 업데이트 전략 ❌ 미구현 (향후 계획)
 ```python
+# src/config/keyword_manager.py (미구현)
 def update_keywords_based_on_performance():
     """성과 기반 키워드 업데이트"""
     # 낮은 점수를 받은 키워드 제거
@@ -217,10 +250,11 @@ def update_keywords_based_on_performance():
     pass
 ```
 
-## 🧪 A/B 테스트
+## 🧪 A/B 테스트 ❌ 미구현
 
-### 프롬프트 A/B 테스트
+### 프롬프트 A/B 테스트 (향후 구현)
 ```python
+# src/config/ab_test.py (미구현)
 import random
 
 def ab_test_prompt(article_data):
@@ -232,8 +266,9 @@ def ab_test_prompt(article_data):
         return PROMPT_VERSIONS["v1.1"]
 ```
 
-### 결과 분석
+### 결과 분석 ❌ 미구현 (향후 계획)
 ```python
+# src/config/ab_test.py (미구현)
 def analyze_prompt_performance():
     """프롬프트 성능 분석"""
     # 버전별 점수 분포 분석
@@ -242,10 +277,11 @@ def analyze_prompt_performance():
     pass
 ```
 
-## 📈 품질 보증
+## 📈 품질 보증 ❌ 미구현
 
-### 프롬프트 검증
+### 프롬프트 검증 (향후 구현)
 ```python
+# src/config/validation.py (미구현)
 def validate_prompt_response(response):
     """프롬프트 응답 검증"""
     # 점수 범위 검증 (0-100)
@@ -254,12 +290,60 @@ def validate_prompt_response(response):
     return is_valid, error_message
 ```
 
-### 이상 점수 탐지
+### 이상 점수 탐지 ❌ 미구현 (향후 계획)
 ```python
+# src/config/anomaly_detection.py (미구현)
 def detect_anomalous_scores():
     """이상 점수 탐지"""
     # 평균에서 크게 벗어난 점수
     # 일관성 없는 점수 패턴
+    # 특정 언론사 편향 점수
+    pass
+```
+
+## 📋 구현 우선순위
+
+### Phase 1: 프롬프트 시스템 기반 (즉시 필요)
+1. ❌ `src/config/prompts.py` 생성
+2. ❌ 기본 프롬프트 템플릿 구현
+3. ❌ 프롬프트 버전 관리
+
+### Phase 2: 키워드 확장 (선택사항)
+1. ❌ 확장 키워드 시스템
+2. ❌ 언론사별 특화 키워드
+3. ❌ 동적 키워드 업데이트
+
+### Phase 3: 고급 기능 (향후)
+1. ❌ A/B 테스트 시스템
+2. ❌ 점수 분석 및 검증
+3. ❌ 이상 탐지 시스템
+
+## 🔗 현재 사용 가능한 기능
+
+### 기본 키워드 사용
+```bash
+# 기본 키워드로 크롤링
+python scripts/crawl_news.py --date 2024-01-15
+
+# 커스텀 키워드로 크롤링
+python scripts/crawl_news.py --date 2024-01-15 --keywords 충격 반전 경악
+```
+
+### 설정 조회
+```python
+from src.config.settings import settings
+
+print(f"기본 키워드: {settings.DEFAULT_KEYWORDS}")
+print(f"키워드당 최대 기사: {settings.MAX_ARTICLES_PER_KEYWORD}")
+print(f"크롤링 지연: {settings.CRAWL_DELAY_SECONDS}초")
+```
+
+## 🎯 다음 단계
+
+1. **즉시 필요**: `src/config/prompts.py` 생성 및 기본 프롬프트 구현
+2. **OpenAI 통합**: 프롬프트 시스템과 배치 처리 연동
+3. **점진적 개선**: 키워드 확장 및 고급 기능 추가
+
          # 특정 언론사 편향 점수
      pass
 ```

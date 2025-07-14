@@ -1,127 +1,155 @@
----
-globs: "src/database/*"
-description: "Supabase 데이터베이스 연산 가이드"
----
 
 # Supabase 데이터베이스 연산
 
-## 🗄️ 데이터베이스 연결
+## 🗄️ 데이터베이스 연결 ✅ 구현완료
 
-### 클라이언트 초기화
+### 클라이언트 초기화 (`src/database/supabase_client.py`)
 ```python
-from supabase import create_client, Client
-import os
+from src.database.supabase_client import get_supabase_client
 
-url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-supabase: Client = create_client(url, key)
+# 싱글톤 패턴으로 구현됨
+client = get_supabase_client()
+supabase = client.client  # Supabase Client 인스턴스
 ```
 
-### 환경 변수 관리
+### 환경 변수 관리 ✅ 구현완료
 - `SUPABASE_URL`: Supabase 프로젝트 URL
 - `SUPABASE_SERVICE_ROLE_KEY`: 서비스 롤 키 (읽기/쓰기 권한)
-- `SUPABASE_SERVICE_ROLE_KEY`: 관리자 권한 키
+- 환경변수 검증 로직 포함 (`src/config/settings.py`)
 
-## 📝 기본 CRUD 연산
+## 📝 기본 CRUD 연산 ✅ 구현완료
 
-### 기사 데이터 삽입
+### 기사 데이터 삽입 (`src/database/operations.py`)
 ```python
-def insert_article(article_data):
-    """기사 데이터 삽입"""
-    return supabase.table('articles').insert(article_data).execute()
+class DatabaseOperations:
+    def insert_article(self, article: Article) -> Dict[str, Any]:
+        """기사 데이터 삽입"""
+        # 기자 정보 자동 조회/생성
+        journalist = self.get_or_create_journalist(article.journalist_name, article.publisher)
+        article.journalist_id = journalist["id"]
+        
+        # 기사 삽입
+        result = self.client.client.table('articles').insert(article.to_dict()).execute()
+        return result.data[0]
 ```
 
-### 기자 정보 조회/삽입
+### 기자 정보 조회/삽입 ✅ 구현완료
 ```python
-def get_or_create_journalist(name, publisher, naver_uuid=None):
+def get_or_create_journalist(self, name: str, publisher: str, naver_uuid: Optional[str] = None):
     """기자 정보 조회 또는 생성"""
+    # 익명 기자 처리 로직 포함
+    if name in ["익명", "기자", "", " "]:
+        name = f"익명기자_{publisher}"
+    
     # 기존 기자 조회
-    existing = supabase.table('journalists').select('*').eq('name', name).eq('publisher', publisher).execute()
+    existing = self.client.client.table('journalists').select('*').eq('name', name).eq('publisher', publisher).execute()
     
     if existing.data:
         return existing.data[0]
     
     # 새 기자 생성
-    new_journalist = {
-        'name': name,
-        'publisher': publisher,
-        'naver_uuid': naver_uuid
-    }
-    return supabase.table('journalists').insert(new_journalist).execute()
+    journalist = Journalist(name=name, publisher=publisher, naver_uuid=naver_uuid)
+    return self.client.client.table('journalists').insert(journalist.to_dict()).execute().data[0]
 ```
 
-## 🔍 쿼리 패턴
+## 🔍 쿼리 패턴 ✅ 구현완료
 
-### 배치 삽입
+### 배치 삽입 (성능 최적화)
 ```python
-def bulk_insert_articles(articles_list):
-    """배치 기사 삽입"""
-    batch_size = 100
-    for i in range(0, len(articles_list), batch_size):
-        batch = articles_list[i:i + batch_size]
-        result = supabase.table('articles').insert(batch).execute()
-        if not result.data:
-            # 에러 처리
-            handle_insert_error(batch)
+def bulk_insert_articles(self, articles: List[Article]) -> List[Dict[str, Any]]:
+    """기사 배치 삽입 (기자 정보 캐싱으로 성능 최적화)"""
+    journalist_cache = {}  # 기자 정보 캐싱
+    inserted_articles = []
+    
+    for article in articles:
+        # 캐시에서 기자 정보 조회
+        journalist_key = f"{article.journalist_name}_{article.publisher}"
+        if journalist_key not in journalist_cache:
+            journalist = self.get_or_create_journalist(article.journalist_name, article.publisher)
+            journalist_cache[journalist_key] = journalist
+        
+        # 기사 삽입
+        article.journalist_id = journalist_cache[journalist_key]["id"]
+        result = self.client.client.table('articles').insert(article.to_dict()).execute()
+        if result.data:
+            inserted_articles.append(result.data[0])
+    
+    return inserted_articles
 ```
 
-### 중복 체크
+### 중복 체크 ✅ 구현완료
 ```python
-def check_duplicate_article(naver_url):
+def check_duplicate_article(self, naver_url: str) -> bool:
     """중복 기사 체크"""
-    result = supabase.table('articles').select('id').eq('naver_url', naver_url).execute()
+    result = self.client.client.table('articles').select('id').eq('naver_url', naver_url).execute()
     return len(result.data) > 0
 ```
 
-### 미처리 기사 조회
+### 미처리 기사 조회 ✅ 구현완료
 ```python
-def get_unprocessed_articles(limit=1000):
+def get_unprocessed_articles(self, limit: int = 1000) -> List[Dict[str, Any]]:
     """OpenAI 처리되지 않은 기사 조회"""
-    return supabase.table('articles').select('*').is_('clickbait_score', 'null').limit(limit).execute()
+    return self.client.client.table('articles').select('*').is_('clickbait_score', 'null').limit(limit).execute().data
 ```
 
-## 🔄 배치 상태 관리
+## 📊 통계 및 집계 ✅ 구현완료
 
-### 배치 상태 업데이트
+### 기자 통계 관리 (`scripts/sync_journalist_stats.py`)
 ```python
-def update_batch_status(batch_id, status, **kwargs):
-    """배치 상태 업데이트"""
-    update_data = {
-        'status': status,
-        'updated_at': 'now()'
-    }
-    update_data.update(kwargs)
-    
-    return supabase.table('batch_status').update(update_data).eq('batch_id', batch_id).execute()
+def update_journalist_stats_manual(self, journalist_id: str) -> bool:
+    """특정 기자의 통계 수동 업데이트"""
+    # 해당 기자의 모든 기사 통계 계산
+    # article_count, avg_clickbait_score, max_score 업데이트
+
+def update_all_journalist_stats(self) -> Dict[str, Any]:
+    """모든 기자 통계 업데이트"""
+    # 모든 기자에 대해 통계 재계산 및 업데이트
+
+def get_journalist_stats_summary(self) -> Dict[str, Any]:
+    """기자 통계 요약 조회"""
+    # 전체 기자 수, 활성 기자 수, 점수 있는 기자 수 등 반환
+
+def fix_inconsistent_stats(self) -> Dict[str, Any]:
+    """통계 불일치 감지 및 수정"""
+    # 기사 수와 실제 통계 간 불일치 감지 및 수정
 ```
 
-### 진행중인 배치 조회
-```python
-def get_active_batches():
-    """진행중인 배치 조회"""
-    return supabase.table('batch_status').select('*').in_('status', ['validating', 'in_progress', 'finalizing']).execute()
+## 🔄 배치 상태 관리 ❌ 미구현
+
+### 배치 상태 테이블 (향후 구현 예정)
+```sql
+CREATE TABLE batch_status (
+  id UUID PRIMARY KEY,
+  batch_id TEXT UNIQUE NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  input_file_id TEXT,
+  output_file_id TEXT,
+  error_file_id TEXT,
+  request_count INTEGER DEFAULT 0,
+  completed_count INTEGER DEFAULT 0,
+  failed_count INTEGER DEFAULT 0
+);
 ```
 
-## 📊 통계 및 집계
+## 🛠️ 에러 핸들링 ✅ 부분 구현
 
-### 언론사별 통계
+### 연결 테스트 ✅ 구현완료
 ```python
-def get_publisher_stats():
-    """언론사별 기사 통계"""
-    return supabase.rpc('get_publisher_statistics').execute()
+# src/database/supabase_client.py
+def test_connection(self) -> bool:
+    """연결 테스트"""
+    try:
+        result = self.client.table("articles").select("id").limit(1).execute()
+        return True
+    except Exception:
+        return False
 ```
 
-### 기자별 점수 업데이트
+### 재시도 메커니즘 ❌ 미구현 (향후 추가 예정)
 ```python
-def update_journalist_scores(journalist_id):
-    """기자별 평균 점수 업데이트"""
-    return supabase.rpc('update_journalist_stats', {'journalist_id': journalist_id}).execute()
-```
-
-## 🛠️ 에러 핸들링
-
-### 연결 재시도
-```python
+# 향후 구현 예정
 import time
 from functools import wraps
 
@@ -136,44 +164,105 @@ def retry_db_operation(max_retries=3, delay=1):
                     if attempt == max_retries - 1:
                         raise
                     time.sleep(delay * (2 ** attempt))
-            return None
         return wrapper
     return decorator
 ```
 
-### 중복 키 에러 처리
-```python
-def handle_duplicate_key_error(data):
-    """중복 키 에러 처리"""
-    # 기존 레코드 업데이트 시도
-    if 'naver_url' in data:
-        return supabase.table('articles').update(data).eq('naver_url', data['naver_url']).execute()
-```
+## 📈 성능 최적화 ✅ 구현완료
 
-## 🔒 보안 및 권한
-
-### RLS (Row Level Security) 정책
-- 읽기 권한: 모든 사용자
-- 쓰기 권한: 서비스 롤만
-
-### 민감한 데이터 처리
-- 기자 개인정보 마스킹
-- 로그에서 민감 데이터 제외
-- API 키 환경변수 관리
-
-## 📈 성능 최적화
-
-### 인덱스 활용
-- `articles.naver_url` 인덱스 활용
-- `articles.published_at` 시간 기반 쿼리
-- `journalists.name + publisher` 복합 인덱스
-
-### 배치 처리 최적화
-- 트랜잭션 단위 최적화
-- 연결 풀 사용
-- 쿼리 캐싱 전략
+### 캐싱 전략
+- 기자 정보 메모리 캐싱 (`journalist_cache`)
+- 배치 삽입으로 DB 호출 최소화
+- 싱글톤 패턴으로 클라이언트 재사용
 
 ### 메모리 효율성
+- 배치 처리 시 스트리밍 방식
+- 처리 완료 후 즉시 메모리 해제
+- 상세한 로깅으로 성능 모니터링
+
+## 🔒 보안 및 권한 ✅ 구현완료
+
+### 환경변수 관리
+- `.env` 파일을 통한 안전한 키 관리
+- 환경변수 검증 로직 (`settings.validate()`)
+- 서비스 롤 키 사용으로 모든 권한 보장
+
+### 데이터 검증
+- Article 모델에서 자동 데이터 검증
+- URL 형식 검증
+- 점수 범위 검증 (0-100)
+
+## 🚀 실행 예시
+
+### 기본 사용법
+```python
+from src.database.operations import DatabaseOperations
+
+db_ops = DatabaseOperations()
+
+# 기사 삽입
+article = Article(title="제목", content="내용", ...)
+result = db_ops.insert_article(article)
+
+# 배치 삽입
+articles = [article1, article2, ...]
+results = db_ops.bulk_insert_articles(articles)
+
+# 중복 체크
+is_duplicate = db_ops.check_duplicate_article("https://n.news.naver.com/...")
+```
+
+### 통계 동기화
+```bash
+# 기자 통계 동기화 스크립트 실행
+python scripts/sync_journalist_stats.py
+
+# 통계 불일치 수정
+python scripts/sync_journalist_stats.py --fix-inconsistencies
+
+# 전체 통계 강제 업데이트
+python scripts/sync_journalist_stats.py --full-update
+```
+
+## 📊 현재 데이터베이스 스키마
+
+### articles 테이블 (구현완료)
+- id: UUID (Primary Key)
+- title: TEXT
+- content: TEXT
+- journalist_id: UUID (Foreign Key)
+- journalist_name: TEXT
+- publisher: TEXT
+- published_at: TIMESTAMP
+- naver_url: TEXT
+- clickbait_score: INTEGER (0-100)
+- clickbait_explanation: TEXT
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+### journalists 테이블 (구현완료)
+- id: UUID (Primary Key)
+- name: TEXT
+- naver_uuid: TEXT
+- publisher: TEXT
+- article_count: INTEGER
+- avg_clickbait_score: DECIMAL
+- max_score: INTEGER
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+## 🔮 향후 개선 계획
+
+### 고급 쿼리 기능
+- 전문검색 인덱스 활용
+- 복합 조건 검색 최적화
+- 실시간 통계 뷰 구현
+
+### 성능 모니터링
+- 쿼리 실행 시간 추적
+- 메모리 사용량 모니터링
+- DB 연결 풀링 구현
+
 - 대량 데이터 스트리밍 처리
 - 메모리 사용량 모니터링
 - 가비지 컬렉션 최적화

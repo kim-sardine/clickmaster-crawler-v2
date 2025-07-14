@@ -1,31 +1,40 @@
----
-globs: ".github/workflows/*"
-description: "GitHub Actions 워크플로우 자동화 가이드"
----
 
 # GitHub Actions 워크플로우 자동화
 
-## 🚀 워크플로우 개요
+## 🚧 현재 구현 상태
 
-### 자동화 파이프라인
-1. **매일 뉴스 크롤링** - 오전 9시 자동 실행
-2. **배치 처리 모니터링** - 10분마다 상태 확인
-3. **완료된 배치 처리** - 30분마다 결과 처리
-4. **데이터 백업** - 매일 자정 백업
+### ❌ 미구현 부분
+- `.github/workflows/` 디렉토리가 비어있음
+- 모든 워크플로우 파일이 미구현 상태
+- 자동화 파이프라인 미설정
 
-### 워크플로우 구조
+### ✅ 준비된 부분
+- 독립 실행 가능한 스크립트들 구현완료
+- 환경변수 관리 시스템 구축
+- 로깅 시스템 완비
+
+## 🚀 워크플로우 개요 (구현 예정)
+
+### 자동화 파이프라인 계획
+1. **매일 뉴스 크롤링** - 오전 9시 자동 실행 (✅ 스크립트 준비완료)
+2. **배치 처리 모니터링** - 10분마다 상태 확인 (❌ 스크립트 미구현)
+3. **완료된 배치 처리** - 30분마다 결과 처리 (❌ 스크립트 미구현)
+4. **기자 통계 동기화** - 매일 자정 실행 (✅ 스크립트 준비완료)
+
+### 워크플로우 구조 (계획)
 ```
 .github/workflows/
-├── daily-crawler.yml          # 매일 뉴스 크롤링
-├── batch-processor.yml        # 배치 처리 모니터링
-├── data-backup.yml           # 데이터 백업
-└── manual-trigger.yml        # 수동 실행 워크플로우
+├── daily-crawler.yml          # 매일 뉴스 크롤링 (미구현)
+├── batch-processor.yml        # 배치 처리 모니터링 (미구현)
+├── sync-stats.yml            # 기자 통계 동기화 (미구현)
+└── manual-trigger.yml        # 수동 실행 워크플로우 (미구현)
 ```
 
-## 📅 스케줄링 워크플로우
+## 📅 스케줄링 워크플로우 (구현 예정)
 
-### 매일 뉴스 크롤링
+### 매일 뉴스 크롤링 (미구현)
 ```yaml
+# .github/workflows/daily-crawler.yml (미구현)
 name: Daily News Crawling
 on:
   schedule:
@@ -47,21 +56,14 @@ jobs:
         run: |
           pip install -r requirements.txt
           
-      - name: Crawl Naver API
+      - name: Crawl Naver News
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
-          python scripts/crawl_news.py --date $(date +%Y-%m-%d) --source api
-          
-      - name: Crawl Naver Entertainment
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          python scripts/crawl_news.py --date $(date +%Y-%m-%d) --source entertain
+          python scripts/crawl_news.py --date $(date +%Y-%m-%d)
           
       - name: Notify Results
         if: always()
@@ -69,8 +71,40 @@ jobs:
           echo "크롤링 완료: $(date)"
 ```
 
-### 배치 처리 모니터링
+### 기자 통계 동기화 (미구현)
 ```yaml
+# .github/workflows/sync-stats.yml (미구현)
+name: Sync Journalist Stats
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 매일 자정 (UTC)
+  workflow_dispatch:
+
+jobs:
+  sync-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Sync Journalist Statistics
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python scripts/sync_journalist_stats.py --fix-inconsistencies
+```
+
+### 배치 처리 모니터링 (미구현 - OpenAI 구현 후)
+```yaml
+# .github/workflows/batch-processor.yml (미구현)
 name: Batch Processing Monitor
 on:
   schedule:
@@ -108,10 +142,11 @@ jobs:
           python scripts/process_completed_batches.py --auto-process
 ```
 
-## 🔧 수동 실행 워크플로우
+## 🔧 수동 실행 워크플로우 (구현 예정)
 
-### 수동 트리거
+### 수동 트리거 (미구현)
 ```yaml
+# .github/workflows/manual-trigger.yml (미구현)
 name: Manual Operations
 on:
   workflow_dispatch:
@@ -123,24 +158,21 @@ on:
         type: choice
         options:
           - crawl
+          - sync-stats
           - batch-create
           - batch-monitor
           - batch-process
-          - data-backup
           
       date:
         description: '처리 날짜 (YYYY-MM-DD)'
         required: false
         type: string
         
-      source:
-        description: '크롤링 소스 (api/entertain)'
+      dry_run:
+        description: '테스트 모드 (실제 저장 안함)'
         required: false
-        default: 'api'
-        type: choice
-        options:
-          - api
-          - entertain
+        default: false
+        type: boolean
 
 jobs:
   manual-operation:
@@ -166,7 +198,14 @@ jobs:
         run: |
           case "${{ github.event.inputs.operation }}" in
             crawl)
-              python scripts/crawl_news.py --date "${{ github.event.inputs.date }}" --source "${{ github.event.inputs.source }}"
+              if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+                python scripts/crawl_news.py --date "${{ github.event.inputs.date }}" --dry-run
+              else
+                python scripts/crawl_news.py --date "${{ github.event.inputs.date }}"
+              fi
+              ;;
+            sync-stats)
+              python scripts/sync_journalist_stats.py --fix-inconsistencies
               ;;
             batch-create)
               python scripts/process_openai_batch.py --create-batch
@@ -177,26 +216,23 @@ jobs:
             batch-process)
               python scripts/process_completed_batches.py --auto-process
               ;;
-            data-backup)
-              python scripts/backup_data.py --date "${{ github.event.inputs.date }}"
-              ;;
           esac
 ```
 
 ## 🔒 보안 및 Secrets 관리
 
-### 필수 Secrets
+### 필수 Secrets (설정 필요)
 ```yaml
 secrets:
   SUPABASE_URL: "https://your-project.supabase.co"
   SUPABASE_SERVICE_ROLE_KEY: "your-supabase-service-role-key"
-  OPENAI_API_KEY: "sk-your-openai-api-key"
+  OPENAI_API_KEY: "sk-your-openai-api-key"  # 향후 추가
   NAVER_CLIENT_ID: "your-naver-client-id"
   NAVER_CLIENT_SECRET: "your-naver-client-secret"
   SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/..."  # 선택사항
 ```
 
-### 환경 변수 검증
+### 환경 변수 검증 (구현 예정)
 ```yaml
 - name: Validate Environment
   run: |
@@ -204,15 +240,19 @@ secrets:
       echo "SUPABASE_URL이 설정되지 않았습니다."
       exit 1
     fi
-    if [ -z "$OPENAI_API_KEY" ]; then
-      echo "OPENAI_API_KEY가 설정되지 않았습니다."
+    if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+      echo "SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다."
+      exit 1
+    fi
+    if [ -z "$NAVER_CLIENT_ID" ]; then
+      echo "NAVER_CLIENT_ID가 설정되지 않았습니다."
       exit 1
     fi
 ```
 
-## 📊 모니터링 및 알림
+## 📊 모니터링 및 알림 (구현 예정)
 
-### 실행 결과 알림
+### 실행 결과 알림 (미구현)
 ```yaml
 - name: Slack Notification
   if: always()
@@ -224,7 +264,7 @@ secrets:
     fields: repo,message,commit,author,action,eventName,ref,workflow
 ```
 
-### 에러 핸들링
+### 에러 핸들링 (구현 예정)
 ```yaml
 - name: Handle Errors
   if: failure()
@@ -234,10 +274,59 @@ secrets:
     # 에러 로그 수집 및 전송
 ```
 
-## 🚀 배포 및 릴리스
+## 🔄 워크플로우 최적화 (구현 예정)
+
+### 캐싱 전략
+```yaml
+- name: Cache Dependencies
+  uses: actions/cache@v3
+  with:
+    path: ~/.cache/pip
+    key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+    restore-keys: |
+      ${{ runner.os }}-pip-
+```
+
+### 병렬 처리 (향후 고려)
+```yaml
+strategy:
+  matrix:
+    date_offset: [0, 1, 2]  # 최근 3일간 병렬 크롤링
+    
+steps:
+  - name: Crawl News (Day -${{ matrix.date_offset }})
+    run: |
+      target_date=$(date -d "${{ matrix.date_offset }} days ago" +%Y-%m-%d)
+      python scripts/crawl_news.py --date $target_date
+```
+
+## 📈 성능 모니터링 (구현 예정)
+
+### 실행 시간 추적
+```yaml
+- name: Track Execution Time
+  run: |
+    start_time=$(date +%s)
+    python scripts/crawl_news.py --date $(date +%Y-%m-%d)
+    end_time=$(date +%s)
+    echo "실행 시간: $((end_time - start_time))초"
+```
+
+### 리소스 사용량 모니터링
+```yaml
+- name: Monitor Resources
+  run: |
+    echo "메모리 사용량:"
+    free -h
+    echo "디스크 사용량:"
+    df -h
+```
+
+## 🚀 배포 및 릴리스 (구현 예정)
 
 ### 태그 기반 배포
 ```yaml
+# .github/workflows/release.yml (미구현)
 name: Release
 on:
   push:
@@ -261,49 +350,52 @@ jobs:
           prerelease: false
 ```
 
-## 🔄 워크플로우 최적화
+## 📋 구현 우선순위
 
-### 캐싱 전략
-```yaml
-- name: Cache Dependencies
-  uses: actions/cache@v3
-  with:
-    path: ~/.cache/pip
-    key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-    restore-keys: |
-      ${{ runner.os }}-pip-
+### Phase 1: 기본 자동화 (즉시 구현 가능)
+1. ✅ **daily-crawler.yml**: 매일 뉴스 크롤링 (스크립트 준비완료)
+2. ✅ **sync-stats.yml**: 기자 통계 동기화 (스크립트 준비완료)
+3. ✅ **manual-trigger.yml**: 수동 실행 (기본 작업들)
+
+### Phase 2: OpenAI 통합 후 (스크립트 구현 필요)
+1. ❌ **batch-processor.yml**: 배치 처리 모니터링
+2. ❌ **manual-trigger.yml**: OpenAI 관련 작업 추가
+
+### Phase 3: 고급 기능 (선택사항)
+1. 알림 시스템 통합
+2. 성능 모니터링
+3. 자동 릴리스
+
+## 🔧 현재 실행 가능한 대안
+
+### 로컬 Cron 설정 (임시 대안)
+```bash
+# crontab -e
+# 매일 오전 9시 뉴스 크롤링
+0 9 * * * cd /path/to/clickmaster-crawler && python scripts/crawl_news.py --date $(date +\%Y-\%m-\%d)
+
+# 매일 자정 기자 통계 동기화  
+0 0 * * * cd /path/to/clickmaster-crawler && python scripts/sync_journalist_stats.py
 ```
 
-### 병렬 처리
-```yaml
-strategy:
-  matrix:
-    source: [api, entertain]
-    
-steps:
-  - name: Crawl News (${{ matrix.source }})
-    run: |
-      python scripts/crawl_news.py --source ${{ matrix.source }}
+### 수동 실행 (현재 사용 가능)
+```bash
+# 뉴스 크롤링
+python scripts/crawl_news.py --date 2024-01-15
+
+# 기자 통계 동기화
+python scripts/sync_journalist_stats.py
+
+# 테스트 모드
+python scripts/crawl_news.py --date 2024-01-15 --dry-run
 ```
 
-## 📈 성능 모니터링
+## 🎯 다음 단계
 
-### 실행 시간 추적
-```yaml
-- name: Track Execution Time
-  run: |
-    start_time=$(date +%s)
-    python scripts/crawl_news.py --date $(date +%Y-%m-%d)
-    end_time=$(date +%s)
-    echo "실행 시간: $((end_time - start_time))초"
-```
+1. **즉시 구현**: `daily-crawler.yml`, `sync-stats.yml` 생성
+2. **OpenAI 통합**: 배치 처리 스크립트 완성 후 `batch-processor.yml` 추가
+3. **고도화**: 알림, 모니터링, 에러 핸들링 강화
 
-### 리소스 사용량 모니터링
-```yaml
-- name: Monitor Resources
-  run: |
-    echo "메모리 사용량:"
-    free -h
     echo "디스크 사용량:"
          df -h
 ```
