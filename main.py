@@ -1,64 +1,50 @@
 #!/usr/bin/env python3
 """
-Clickmaster Crawler - 메인 엔트리포인트
-로컬 실행을 위한 메인 스크립트
+클릭마스터 크롤러 메인 실행 파일
 """
 
 import sys
-import os
-import argparse
 import logging
+from datetime import datetime
 
-# 프로젝트 루트를 Python 경로에 추가
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from src.config.settings import settings
+from src.crawlers.naver_crawler import NaverNewsCrawler
 
-from src.config.settings import Settings
-from src.utils.logging_utils import setup_logger
-from scripts.crawl_news import main as crawl_news_main
-from scripts.monitor_batches import main as monitor_batches_main
-from scripts.process_completed_batches import main as process_completed_batches_main
-from scripts.process_naksi_king import main as process_naksi_king_main
-
-logger = setup_logger(__name__)
+# 로깅 설정
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL),
+    format=settings.LOG_FORMAT,
+    handlers=[
+        logging.FileHandler(f"logs/main_{datetime.now().strftime('%Y%m%d')}.log"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 
 def main():
-    """메인 함수"""
-    parser = argparse.ArgumentParser(description="Clickmaster Crawler - 네이버 뉴스 낚시성 분석 도구")
-    parser.add_argument("command", choices=["crawl", "monitor", "process", "naksi-king"], help="실행할 명령")
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="로그 레벨")
-
-    args = parser.parse_args()
-
-    # 로그 레벨 설정
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
-
+    """메인 실행 함수"""
     try:
-        logger.info(f"🚀 Starting Clickmaster Crawler - Command: {args.command}")
+        logger.info("클릭마스터 크롤러 시작")
 
-        # 환경변수 검증
-        Settings.validate_required_env_vars()
+        # 설정 검증
+        if not settings.validate():
+            logger.error("필수 환경변수가 설정되지 않았습니다")
+            logger.error("SUPABASE_URL, SUPABASE_KEY, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET이 필요합니다")
+            sys.exit(1)
 
-        if args.command == "crawl":
-            logger.info("📰 Starting news crawling...")
-            crawl_news_main()
-        elif args.command == "monitor":
-            logger.info("🔍 Starting batch monitoring...")
-            monitor_batches_main()
-        elif args.command == "process":
-            logger.info("⚙️ Starting batch processing...")
-            process_completed_batches_main()
-        elif args.command == "naksi-king":
-            logger.info("👑 Starting Naksi King analysis...")
-            process_naksi_king_main()
+        # 크롤러 초기화
+        crawler = NaverNewsCrawler(client_id=settings.NAVER_CLIENT_ID, client_secret=settings.NAVER_CLIENT_SECRET)
 
-        logger.info("✅ Command completed successfully")
+        # 기본 키워드로 크롤링 실행
+        saved_count = crawler.crawl_and_save(
+            keywords=settings.DEFAULT_KEYWORDS, max_articles_per_keyword=settings.MAX_ARTICLES_PER_KEYWORD
+        )
 
-    except KeyboardInterrupt:
-        logger.info("⏹️ Process interrupted by user")
-        sys.exit(0)
+        logger.info(f"크롤링 완료: {saved_count}개 기사 저장")
+
     except Exception as e:
-        logger.error(f"❌ Command failed: {str(e)}")
+        logger.error(f"실행 중 오류 발생: {e}")
         sys.exit(1)
 
 

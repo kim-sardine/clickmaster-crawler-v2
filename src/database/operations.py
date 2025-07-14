@@ -1,274 +1,191 @@
-from typing import List, Dict, Any, Optional
+"""
+Supabase 데이터베이스 연산
+"""
+
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
 
-from ..models.base import News, BatchJob
-from ..models.batch_status import BatchStatus
-from .supabase_client import supabase_client
-from ..utils.date_utils import format_datetime_for_db, get_kst_now
+from src.models.article import Article, Journalist
+from src.database.supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 
-class NewsOperations:
-    """뉴스 데이터 조작"""
+class DatabaseOperations:
+    """데이터베이스 연산 클래스"""
 
-    @staticmethod
-    def insert_news_batch(news_list: List[News]) -> int:
-        """뉴스 배치 삽입"""
+    def __init__(self):
+        self.client = get_supabase_client()
+
+    def get_or_create_journalist(self, name: str, publisher: str, naver_uuid: Optional[str] = None) -> Dict[str, Any]:
+        """
+        기자 정보 조회 또는 생성
+
+        Args:
+            name: 기자명
+            publisher: 언론사
+            naver_uuid: 네이버 UUID (선택)
+
+        Returns:
+            기자 정보 딕셔너리
+        """
         try:
-            if not news_list:
-                return 0
-
-            # News 객체를 딕셔너리로 변환
-            news_data = []
-            for news in news_list:
-                data = {
-                    "title": news.title,
-                    "content": news.content,
-                    "url": news.url,
-                    "published_date": news.published_date,
-                    "source": news.source,
-                    "author": news.author,
-                    "created_at": format_datetime_for_db(get_kst_now()),
-                }
-                news_data.append(data)
-
-            result = supabase_client.client.table("articles").insert(news_data).execute()
-
-            logger.info(f"✅ Inserted {len(result.data)} news articles")
-            return len(result.data)
-
-        except Exception as e:
-            logger.error(f"❌ Failed to insert news batch: {str(e)}")
-            raise
-
-    @staticmethod
-    def check_duplicate_url(url: str) -> bool:
-        """URL 중복 확인"""
-        try:
-            result = supabase_client.client.table("articles").select("id").eq("url", url).execute()
-            return len(result.data) > 0
-        except Exception as e:
-            logger.error(f"❌ Failed to check duplicate URL: {str(e)}")
-            return False
-
-    @staticmethod
-    def get_unprocessed_news(limit: int = 100) -> List[Dict[str, Any]]:
-        """미처리 뉴스 조회 (clickbait_score가 null인 기사)"""
-        try:
-            result = (
-                supabase_client.client.table("articles")
-                .select("id, title, content")
-                .is_("clickbait_score", "null")
-                .limit(limit)
-                .execute()
-            )
-
-            logger.info(f"📋 Found {len(result.data)} unprocessed news articles")
-            return result.data
-
-        except Exception as e:
-            logger.error(f"❌ Failed to get unprocessed news: {str(e)}")
-            raise
-
-    @staticmethod
-    def update_clickbait_scores(score_updates: List[Dict[str, Any]]) -> int:
-        """낚시성 점수 업데이트"""
-        try:
-            updated_count = 0
-
-            for update in score_updates:
-                result = (
-                    supabase_client.client.table("articles")
-                    .update(
-                        {
-                            "clickbait_score": update["clickbait_score"],
-                            "reasoning": update["reasoning"],
-                            "updated_at": format_datetime_for_db(get_kst_now()),
-                        }
-                    )
-                    .eq("id", update["id"])
-                    .execute()
-                )
-
-                if result.data:
-                    updated_count += len(result.data)
-
-            logger.info(f"✅ Updated clickbait scores for {updated_count} articles")
-            return updated_count
-
-        except Exception as e:
-            logger.error(f"❌ Failed to update clickbait scores: {str(e)}")
-            raise
-
-    @staticmethod
-    def get_news_by_date_range(start_date: str, end_date: str) -> List[Dict[str, Any]]:
-        """날짜 범위로 뉴스 조회"""
-        try:
-            result = (
-                supabase_client.client.table("articles")
+            # 기존 기자 조회
+            existing = (
+                self.client.client.table("journalists")
                 .select("*")
-                .gte("published_date", start_date)
-                .lte("published_date", end_date)
+                .eq("name", name)
+                .eq("publisher", publisher)
                 .execute()
             )
 
-            logger.info(f"📋 Found {len(result.data)} news articles in date range")
-            return result.data
+            if existing.data:
+                logger.info(f"기존 기자 조회: {name} ({publisher})")
+                return existing.data[0]
 
-        except Exception as e:
-            logger.error(f"❌ Failed to get news by date range: {str(e)}")
-            raise
+            # 새 기자 생성
+            journalist = Journalist(name=name, publisher=publisher, naver_uuid=naver_uuid)
 
-    @staticmethod
-    def get_news_stats() -> Dict[str, int]:
-        """뉴스 통계 조회"""
-        try:
-            # 전체 뉴스 수
-            total_result = supabase_client.client.table("articles").select("id").execute()
-            total_count = len(total_result.data)
-
-            # 처리된 뉴스 수
-            processed_result = (
-                supabase_client.client.table("articles").select("id").not_.is_("clickbait_score", "null").execute()
-            )
-            processed_count = len(processed_result.data)
-
-            # 미처리 뉴스 수
-            unprocessed_count = total_count - processed_count
-
-            stats = {"total": total_count, "processed": processed_count, "unprocessed": unprocessed_count}
-
-            logger.info(f"📊 News stats: {stats}")
-            return stats
-
-        except Exception as e:
-            logger.error(f"❌ Failed to get news stats: {str(e)}")
-            raise
-
-
-class BatchOperations:
-    """배치 작업 조작"""
-
-    @staticmethod
-    def create_batch_job(batch_id: str, input_file_id: str, total_count: int) -> bool:
-        """배치 작업 생성"""
-        try:
-            data = {
-                "batch_id": batch_id,
-                "status": BatchStatus.PENDING.value,
-                "input_file_id": input_file_id,
-                "total_count": total_count,
-                "created_at": format_datetime_for_db(get_kst_now()),
-            }
-
-            result = supabase_client.client.table("batch_jobs").insert(data).execute()
-
-            logger.info(f"✅ Created batch job: {batch_id}")
-            return len(result.data) > 0
-
-        except Exception as e:
-            logger.error(f"❌ Failed to create batch job: {str(e)}")
-            raise
-
-    @staticmethod
-    def get_active_batches() -> List[Dict[str, Any]]:
-        """진행 중인 배치 작업 조회"""
-        try:
-            result = (
-                supabase_client.client.table("batch_jobs")
-                .select("*")
-                .in_("status", [BatchStatus.PENDING.value, BatchStatus.IN_PROGRESS.value])
-                .execute()
-            )
-
-            logger.info(f"📋 Found {len(result.data)} active batch jobs")
-            return result.data
-
-        except Exception as e:
-            logger.error(f"❌ Failed to get active batches: {str(e)}")
-            raise
-
-    @staticmethod
-    def get_completed_batches() -> List[Dict[str, Any]]:
-        """완료된 배치 작업 조회 (미처리)"""
-        try:
-            result = (
-                supabase_client.client.table("batch_jobs")
-                .select("*")
-                .eq("status", BatchStatus.COMPLETED.value)
-                .is_("output_file_id", "null")
-                .execute()
-            )
-
-            logger.info(f"📋 Found {len(result.data)} completed unprocessed batches")
-            return result.data
-
-        except Exception as e:
-            logger.error(f"❌ Failed to get completed batches: {str(e)}")
-            raise
-
-    @staticmethod
-    def update_batch_status(batch_id: str, status: str, **kwargs) -> bool:
-        """배치 상태 업데이트"""
-        try:
-            update_data = {"status": status, "updated_at": format_datetime_for_db(get_kst_now())}
-
-            # 추가 필드 업데이트
-            if "output_file_id" in kwargs:
-                update_data["output_file_id"] = kwargs["output_file_id"]
-            if "processed_count" in kwargs:
-                update_data["processed_count"] = kwargs["processed_count"]
-            if "error_message" in kwargs:
-                update_data["error_message"] = kwargs["error_message"]
-            if status == BatchStatus.COMPLETED.value:
-                update_data["completed_at"] = format_datetime_for_db(get_kst_now())
-
-            result = supabase_client.client.table("batch_jobs").update(update_data).eq("batch_id", batch_id).execute()
-
-            logger.info(f"✅ Updated batch {batch_id} status to {status}")
-            return len(result.data) > 0
-
-        except Exception as e:
-            logger.error(f"❌ Failed to update batch status: {str(e)}")
-            raise
-
-    @staticmethod
-    def get_batch_by_id(batch_id: str) -> Optional[Dict[str, Any]]:
-        """배치 ID로 조회"""
-        try:
-            result = supabase_client.client.table("batch_jobs").select("*").eq("batch_id", batch_id).execute()
+            result = self.client.client.table("journalists").insert(journalist.to_dict()).execute()
 
             if result.data:
+                logger.info(f"새 기자 생성: {name} ({publisher})")
                 return result.data[0]
-            return None
+            else:
+                raise Exception("기자 생성 실패")
 
         except Exception as e:
-            logger.error(f"❌ Failed to get batch by ID: {str(e)}")
+            logger.error(f"기자 조회/생성 오류: {e}")
             raise
 
-    @staticmethod
-    def cleanup_old_batches(days_old: int = 7) -> int:
-        """오래된 배치 작업 정리"""
-        try:
-            cutoff_date = get_kst_now().replace(days=-days_old)
-            cutoff_str = format_datetime_for_db(cutoff_date)
+    def insert_article(self, article: Article) -> Dict[str, Any]:
+        """
+        기사 삽입
 
-            # 완료된 오래된 배치들 삭제
+        Args:
+            article: 기사 객체
+
+        Returns:
+            삽입된 기사 정보
+        """
+        try:
+            # 기자 정보 조회/생성
+            journalist = self.get_or_create_journalist(article.journalist_name, article.publisher)
+
+            # 기사 데이터 준비
+            article.journalist_id = journalist["id"]
+            article_data = article.to_dict()
+
+            # 기사 삽입
+            result = self.client.client.table("articles").insert(article_data).execute()
+
+            if result.data:
+                logger.info(f"기사 삽입 완료: {article.title[:50]}...")
+                return result.data[0]
+            else:
+                raise Exception("기사 삽입 실패")
+
+        except Exception as e:
+            logger.error(f"기사 삽입 오류: {e}")
+            raise
+
+    def bulk_insert_articles(self, articles: List[Article]) -> List[Dict[str, Any]]:
+        """
+        기사 배치 삽입
+
+        Args:
+            articles: 기사 리스트
+
+        Returns:
+            삽입된 기사 정보 리스트
+        """
+        inserted_articles = []
+
+        for article in articles:
+            try:
+                result = self.insert_article(article)
+                inserted_articles.append(result)
+            except Exception as e:
+                logger.error(f"기사 삽입 실패: {article.title[:50]}... - {e}")
+                continue
+
+        logger.info(f"배치 삽입 완료: {len(inserted_articles)}/{len(articles)}")
+        return inserted_articles
+
+    def check_duplicate_article(self, naver_url: str) -> bool:
+        """
+        중복 기사 체크
+
+        Args:
+            naver_url: 네이버 뉴스 URL
+
+        Returns:
+            중복 여부
+        """
+        try:
+            result = self.client.client.table("articles").select("id").eq("naver_url", naver_url).execute()
+
+            return len(result.data) > 0
+
+        except Exception as e:
+            logger.error(f"중복 체크 오류: {e}")
+            return False
+
+    def get_unprocessed_articles(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """
+        미처리 기사 조회 (clickbait_score가 null인 기사)
+
+        Args:
+            limit: 조회 제한 수
+
+        Returns:
+            미처리 기사 리스트
+        """
+        try:
             result = (
-                supabase_client.client.table("batch_jobs")
-                .delete()
-                .eq("status", BatchStatus.COMPLETED.value)
-                .lt("completed_at", cutoff_str)
+                self.client.client.table("articles").select("*").is_("clickbait_score", "null").limit(limit).execute()
+            )
+
+            logger.info(f"미처리 기사 조회: {len(result.data)}개")
+            return result.data
+
+        except Exception as e:
+            logger.error(f"미처리 기사 조회 오류: {e}")
+            return []
+
+    def update_article_score(self, article_id: str, clickbait_score: int, score_explanation: str) -> bool:
+        """
+        기사 낚시 점수 업데이트
+
+        Args:
+            article_id: 기사 ID
+            clickbait_score: 낚시 점수 (0-100)
+            score_explanation: 점수 설명
+
+        Returns:
+            업데이트 성공 여부
+        """
+        try:
+            result = (
+                self.client.client.table("articles")
+                .update(
+                    {
+                        "clickbait_score": clickbait_score,
+                        "score_explanation": score_explanation,
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                )
+                .eq("id", article_id)
                 .execute()
             )
 
-            deleted_count = len(result.data) if result.data else 0
-            logger.info(f"🧹 Cleaned up {deleted_count} old batch jobs")
+            success = len(result.data) > 0
+            if success:
+                logger.info(f"기사 점수 업데이트 완료: {article_id}")
 
-            return deleted_count
+            return success
 
         except Exception as e:
-            logger.error(f"❌ Failed to cleanup old batches: {str(e)}")
-            raise
+            logger.error(f"기사 점수 업데이트 오류: {e}")
+            return False

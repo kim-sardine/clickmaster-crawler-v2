@@ -1,46 +1,39 @@
+"""
+Supabase 클라이언트 설정
+"""
+
 import os
-from supabase import create_client, Client
 from typing import Optional
-import logging
-
-from ..config.settings import Settings
-
-logger = logging.getLogger(__name__)
+from supabase import create_client, Client
+from dotenv import load_dotenv
 
 
 class SupabaseClient:
     """Supabase 클라이언트 래퍼"""
 
-    _instance: Optional["SupabaseClient"] = None
-    _client: Optional[Client] = None
+    def __init__(self, url: Optional[str] = None, key: Optional[str] = None):
+        """
+        Supabase 클라이언트 초기화
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        Args:
+            url: Supabase URL (환경변수에서 가져옴)
+            key: Supabase 서비스 키 (환경변수에서 가져옴)
+        """
+        load_dotenv()
 
-    def __init__(self):
-        if self._client is None:
-            self._initialize_client()
+        self.url = url or os.environ.get("SUPABASE_URL")
+        self.key = key or os.environ.get("SUPABASE_KEY")
 
-    def _initialize_client(self):
-        """Supabase 클라이언트 초기화"""
-        try:
-            Settings.validate_required_env_vars()
+        if not self.url or not self.key:
+            raise ValueError("SUPABASE_URL과 SUPABASE_KEY 환경변수가 필요합니다")
 
-            self._client = create_client(Settings.SUPABASE_URL, Settings.SUPABASE_KEY)
-
-            logger.info("✅ Supabase client initialized successfully")
-
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize Supabase client: {str(e)}")
-            raise
+        self._client: Optional[Client] = None
 
     @property
     def client(self) -> Client:
-        """Supabase 클라이언트 반환"""
+        """Supabase 클라이언트 반환 (지연 초기화)"""
         if self._client is None:
-            self._initialize_client()
+            self._client = create_client(self.url, self.key)
         return self._client
 
     def test_connection(self) -> bool:
@@ -48,20 +41,18 @@ class SupabaseClient:
         try:
             # 간단한 쿼리로 연결 테스트
             result = self.client.table("articles").select("id").limit(1).execute()
-            logger.info("✅ Supabase connection test successful")
             return True
-        except Exception as e:
-            logger.error(f"❌ Supabase connection test failed: {str(e)}")
+        except Exception:
             return False
-
-    def get_table_info(self, table_name: str) -> dict:
-        """테이블 정보 조회"""
-        try:
-            result = self.client.table(table_name).select("*").limit(1).execute()
-            return {"table_name": table_name, "connection_ok": True, "sample_count": len(result.data)}
-        except Exception as e:
-            return {"table_name": table_name, "connection_ok": False, "error": str(e)}
 
 
 # 전역 인스턴스
-supabase_client = SupabaseClient()
+_supabase_client = None
+
+
+def get_supabase_client() -> SupabaseClient:
+    """Supabase 클라이언트 싱글톤 인스턴스 반환"""
+    global _supabase_client
+    if _supabase_client is None:
+        _supabase_client = SupabaseClient()
+    return _supabase_client

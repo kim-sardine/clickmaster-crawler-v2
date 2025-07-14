@@ -1,479 +1,238 @@
-# 워크플로우 스크립트
-
-GitHub Actions에서 실행되는 각 단계별 파이썬 스크립트들입니다.
-
-## 프로젝트 구조
-
-```
-scripts/
-├── __init__.py
-├── crawl_news.py              # 뉴스 크롤링 스크립트
-├── monitor_batches.py         # 배치 모니터링 스크립트
-├── process_completed_batches.py # 완료된 배치 처리 스크립트
-└── process_naksi_king.py      # 특별 뉴스 처리 스크립트
-```
-
-## 1. 뉴스 크롤링 스크립트 (scripts/crawl_news.py)
-
-### 기능
-- 네이버 검색 API를 통한 뉴스 수집
-- 개별 뉴스 페이지 크롤링
-- Supabase articles 테이블에 저장
-
-### 스크립트 구조
-```python
-#!/usr/bin/env python3
-"""
-뉴스 크롤링 및 Supabase 저장 스크립트
-GitHub Actions에서 실행됩니다.
-"""
-import sys
-import os
-import argparse
-from datetime import datetime, timedelta
-
-# 프로젝트 루트를 Python path에 추가
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.core.news_collector import NewsCollector
-from src.database.operations import save_articles, get_database_stats
-from src.config.keywords import get_final_keywords
-from src.utils.logging_utils import logger
-
-def main():
-    parser = argparse.ArgumentParser(description='뉴스 크롤링 스크립트')
-    parser.add_argument(
-        '--date',
-        type=str,
-        help='분석할 날짜 (YYYY-MM-DD). 기본값은 어제 날짜',
-        default=(datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    )
-    args = parser.parse_args()
-    
-    try:
-        # 환경변수 검증
-        required_vars = ['NAVER_CLIENT_ID', 'NAVER_CLIENT_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY']
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-        if missing_vars:
-            raise ValueError(f"필수 환경변수가 누락되었습니다: {missing_vars}")
-        
-        logger.info(f"뉴스 크롤링 시작 - 대상 날짜: {args.date}")
-        
-        # 뉴스 수집
-        news_collector = NewsCollector()
-        keywords = get_final_keywords()
-        news_list = news_collector.get_news(keywords, args.date)
-        
-        if not news_list:
-            logger.warning("수집된 뉴스가 없습니다.")
-            return 0
-        
-        # 추가 정보 크롤링
-        news_list = news_collector.get_additional_info(news_list)
-        
-        # Supabase에 저장
-        if save_articles(news_list):
-            logger.info(f"성공적으로 {len(news_list)}개 뉴스를 저장했습니다.")
-            
-            # 데이터베이스 통계 출력
-            stats = get_database_stats()
-            logger.info(f"데이터베이스 통계: {stats}")
-            
-            return 0
-        else:
-            logger.error("뉴스 저장에 실패했습니다.")
-            return 1
-            
-    except Exception as e:
-        logger.error(f"뉴스 크롤링 중 오류 발생: {str(e)}")
-        return 1
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-### 실행 방법
-```bash
-# 기본 실행 (어제 뉴스)
-python scripts/crawl_news.py
-
-# 특정 날짜 뉴스
-python scripts/crawl_news.py --date 2024-01-15
-```
-
-## 2. 배치 모니터링 스크립트 (scripts/monitor_batches.py)
-
-### 기능
-- Supabase에서 진행 중인 배치 조회
-- OpenAI API로 실제 배치 상태 확인 및 업데이트
-- 새로운 배치 작업 시작 (필요시)
-
-### 스크립트 구조
-```python
-#!/usr/bin/env python3
-"""
-배치 모니터링 스크립트
-진행 중인 배치들의 상태를 확인하고 업데이트합니다.
-"""
-import sys
-import os
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.database.operations import (
-    get_active_batches, 
-    update_batch_status,
-    get_unprocessed_articles,
-    create_batch_job,
-    update_articles_with_batch
-)
-from src.core.openai_batch import get_openai_client, upload_batch_file, create_batch
-from src.utils.logging_utils import logger
-from src.utils.file_utils import create_batch_input_file
-from src.config.prompts import get_latest_prompt
-
-def monitor_existing_batches():
-    """기존 배치들의 상태를 모니터링합니다."""
-    try:
-        openai_client = get_openai_client()
-        active_batches = get_active_batches()
-        
-        if not active_batches:
-            logger.info("진행 중인 배치가 없습니다.")
-            return True
-        
-        logger.info(f"진행 중인 배치: {len(active_batches)}개")
-        
-        for batch in active_batches:
-            batch_id = batch['openai_batch_id']
-            current_status = batch['status']
-            
-            try:
-                # OpenAI에서 실제 상태 확인
-                actual_batch = openai_client.batches.retrieve(batch_id)
-                actual_status = actual_batch.status
-                
-                if actual_status != current_status:
-                    logger.info(f"배치 {batch_id} 상태 업데이트: {current_status} -> {actual_status}")
-                    
-                    update_data = {'status': actual_status}
-                    
-                    # 완료된 경우 추가 정보 업데이트
-                    if actual_status == 'completed':
-                        update_data.update({
-                            'completed_at': 'NOW()',
-                            'output_file_id': actual_batch.output_file_id
-                        })
-                    elif actual_status == 'failed':
-                        update_data['error_message'] = str(getattr(actual_batch, 'errors', 'Unknown error'))
-                    
-                    update_batch_status(batch_id, **update_data)
-                else:
-                    logger.info(f"배치 {batch_id}: {actual_status} (변경 없음)")
-                    
-            except Exception as e:
-                logger.error(f"배치 {batch_id} 상태 확인 실패: {str(e)}")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"배치 모니터링 중 오류 발생: {str(e)}")
-        return False
-
-def start_new_batch_if_needed():
-    """필요시 새로운 배치를 시작합니다."""
-    try:
-        # 진행 중인 배치가 있는지 확인
-        active_batches = get_active_batches()
-        if active_batches:
-            logger.info("이미 진행 중인 배치가 있어 새 배치를 시작하지 않습니다.")
-            return True
-        
-        # 미처리 기사 확인
-        unprocessed_articles = get_unprocessed_articles(limit=1000)
-        if not unprocessed_articles:
-            logger.info("처리할 미완료 기사가 없습니다.")
-            return True
-        
-        logger.info(f"미처리 기사 {len(unprocessed_articles)}개 발견. 새 배치를 시작합니다.")
-        
-        # 배치 입력 파일 생성
-        input_file_path = create_batch_input_file(
-            unprocessed_articles, 
-            "gpt-4o-mini", 
-            get_latest_prompt()
-        )
-        
-        # OpenAI에 파일 업로드
-        input_file_id = upload_batch_file(input_file_path)
-        
-        # 배치 생성
-        batch_id = create_batch(input_file_id)
-        
-        # Supabase에 배치 정보 저장
-        create_batch_job(batch_id, len(unprocessed_articles), input_file_id)
-        
-        # 기사들에 배치 ID 할당
-        article_ids = [article['id'] for article in unprocessed_articles]
-        update_articles_with_batch(article_ids, batch_id)
-        
-        logger.info(f"새 배치 {batch_id} 시작됨 ({len(unprocessed_articles)}개 기사)")
-        
-        # 임시 파일 정리
-        os.remove(input_file_path)
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"새 배치 시작 중 오류 발생: {str(e)}")
-        return False
-
-def main():
-    try:
-        logger.info("배치 모니터링 시작")
-        
-        # 1. 기존 배치 상태 확인
-        if not monitor_existing_batches():
-            return 1
-        
-        # 2. 필요시 새 배치 시작
-        if not start_new_batch_if_needed():
-            return 1
-        
-        logger.info("배치 모니터링 완료")
-        return 0
-        
-    except Exception as e:
-        logger.error(f"배치 모니터링 중 오류 발생: {str(e)}")
-        return 1
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-## 3. 완료된 배치 처리 스크립트 (scripts/process_completed_batches.py)
-
-### 기능
-- 완료된 배치의 결과 파일 다운로드
-- 결과 파싱 및 기사 점수 업데이트
-- 배치 처리 완료 표시
-
-### 스크립트 구조
-```python
-#!/usr/bin/env python3
-"""
-완료된 배치 처리 스크립트
-완료된 배치들의 결과를 다운로드하고 기사 점수를 업데이트합니다.
-"""
-import sys
-import os
-import json
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.database.operations import (
-    get_completed_batches,
-    update_article_scores,
-    mark_batch_processed
-)
-from src.core.openai_batch import get_openai_client, download_batch_output
-from src.utils.logging_utils import logger
-
-def process_batch_results(batch_info):
-    """개별 배치 결과를 처리합니다."""
-    try:
-        batch_id = batch_info['openai_batch_id']
-        output_file_id = batch_info['output_file_id']
-        
-        if not output_file_id:
-            logger.warning(f"배치 {batch_id}에 출력 파일이 없습니다.")
-            return False
-        
-        logger.info(f"배치 {batch_id} 결과 처리 중...")
-        
-        # 결과 파일 다운로드
-        output_file_path = f"/tmp/batch_output_{batch_id}.jsonl"
-        download_batch_output(batch_id, output_file_path)
-        
-        # 결과 파싱
-        scores_data = []
-        with open(output_file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip():
-                    result = json.loads(line)
-                    
-                    if 'error' in result:
-                        logger.warning(f"기사 처리 실패: {result['custom_id']} - {result['error']}")
-                        continue
-                    
-                    try:
-                        # OpenAI 응답에서 점수 추출
-                        response_body = result['response']['body']
-                        choice = response_body['choices'][0]
-                        content = choice['message']['content']
-                        
-                        # JSON 파싱
-                        score_result = json.loads(content)
-                        
-                        # custom_id에서 기사 정보 추출
-                        custom_id = result['custom_id']
-                        article_id = custom_id.replace('article_', '')
-                        
-                        scores_data.append({
-                            'article_id': article_id,
-                            'score': score_result['score'],
-                            'reason': score_result['reason']
-                        })
-                        
-                    except Exception as e:
-                        logger.error(f"결과 파싱 실패: {result['custom_id']} - {str(e)}")
-        
-        if not scores_data:
-            logger.warning(f"배치 {batch_id}에서 처리할 수 있는 결과가 없습니다.")
-            return False
-        
-        # 기사 점수 업데이트
-        if update_article_scores(scores_data):
-            # 배치 처리 완료 표시
-            mark_batch_processed(batch_id)
-            logger.info(f"배치 {batch_id} 처리 완료 ({len(scores_data)}개 기사)")
-            return True
-        else:
-            logger.error(f"배치 {batch_id} 점수 업데이트 실패")
-            return False
-        
-    except Exception as e:
-        logger.error(f"배치 {batch_id} 처리 중 오류 발생: {str(e)}")
-        return False
-    finally:
-        # 임시 파일 정리
-        if os.path.exists(output_file_path):
-            os.remove(output_file_path)
-
-def main():
-    try:
-        logger.info("완료된 배치 처리 시작")
-        
-        # 완료된 배치 조회
-        completed_batches = get_completed_batches()
-        
-        if not completed_batches:
-            logger.info("처리할 완료된 배치가 없습니다.")
-            return 0
-        
-        logger.info(f"처리할 완료된 배치: {len(completed_batches)}개")
-        
-        success_count = 0
-        for batch_info in completed_batches:
-            if process_batch_results(batch_info):
-                success_count += 1
-        
-        logger.info(f"배치 처리 완료: {success_count}/{len(completed_batches)}개 성공")
-        
-        return 0 if success_count == len(completed_batches) else 1
-        
-    except Exception as e:
-        logger.error(f"완료된 배치 처리 중 오류 발생: {str(e)}")
-        return 1
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-## 4. 특별 뉴스 처리 스크립트 (scripts/process_naksi_king.py)
-
-### 기능
-- naksi_king.json 파일 기반 특별 뉴스 처리
-- 네이버 미디어 API 호출
-- Supabase에 저장
-
-### 스크립트 구조
-```python
-#!/usr/bin/env python3
-"""
-Naksi King 특별 뉴스 처리 스크립트
-"""
-import sys
-import os
-import argparse
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from naksi_king import NaksiKingProcessor
-from src.utils.logging_utils import logger
-
-def main():
-    parser = argparse.ArgumentParser(description='Naksi King 뉴스 처리 스크립트')
-    parser.add_argument(
-        '--offset_limit',
-        type=int,
-        help='API 요청의 최대 offset 값 (기본값: 0)',
-        default=0
-    )
-    args = parser.parse_args()
-    
-    try:
-        logger.info(f"Naksi King 처리 시작 - offset_limit: {args.offset_limit}")
-        
-        processor = NaksiKingProcessor()
-        result_path = processor.process(args.offset_limit)
-        
-        if result_path:
-            logger.info(f"Naksi King 처리 완료: {result_path}")
-            return 0
-        else:
-            logger.error("Naksi King 처리 실패")
-            return 1
-            
-    except Exception as e:
-        logger.error(f"Naksi King 처리 중 오류 발생: {str(e)}")
-        return 1
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-## 공통 요구사항
-
-### 환경변수
-모든 스크립트는 다음 환경변수들을 필요로 합니다:
-- `OPENAI_API_KEY`: OpenAI API 키
-- `NAVER_CLIENT_ID`: 네이버 API 클라이언트 ID
-- `NAVER_CLIENT_SECRET`: 네이버 API 클라이언트 시크릿
-- `SUPABASE_URL`: Supabase 프로젝트 URL
-- `SUPABASE_SERVICE_KEY`: Supabase 서비스 키
-
-### 로깅
-모든 스크립트는 구조화된 로깅을 사용합니다:
-```python
-from src.utils.logging_utils import logger
-
-logger.info("정보 메시지")
-logger.warning("경고 메시지")
-logger.error("오류 메시지")
-```
-
-### 에러 처리
-모든 스크립트는 적절한 exit code를 반환합니다:
-- `0`: 성공
-- `1`: 실패
-
-### 테스트 실행
-각 스크립트는 로컬에서도 실행 가능합니다:
-```bash
-# 환경변수 설정
-export OPENAI_API_KEY="your_key"
-export NAVER_CLIENT_ID="your_id"
-export NAVER_CLIENT_SECRET="your_secret"
-export SUPABASE_URL="your_url"
-export SUPABASE_SERVICE_KEY="your_key"
-
-# 스크립트 실행
-python scripts/crawl_news.py
-python scripts/monitor_batches.py
-python scripts/process_completed_batches.py
-```
-description:
-globs:
-alwaysApply: false
 ---
+globs: "scripts/*"
+description: "독립 실행 워크플로우 스크립트 가이드"
+---
+
+# 워크플로우 스크립트 가이드
+
+## 📋 스크립트 구조
+
+### 독립 실행 원칙
+각 스크립트는 다음 조건을 만족해야 합니다:
+- **독립성**: 다른 스크립트에 의존하지 않고 실행 가능
+- **멱등성**: 여러 번 실행해도 안전한 결과
+- **로깅**: 실행 과정과 결과를 상세히 기록
+- **에러 핸들링**: 실패 시 적절한 복구 메커니즘
+
+### 공통 구조 템플릿
+```python
+#!/usr/bin/env python3
+"""
+스크립트 설명
+"""
+
+import sys
+import logging
+import argparse
+from datetime import datetime
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(f'logs/{__name__}_{datetime.now().strftime("%Y%m%d")}.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def main():
+    parser = argparse.ArgumentParser(description='스크립트 설명')
+    parser.add_argument('--date', help='처리 날짜 (YYYY-MM-DD)')
+    parser.add_argument('--dry-run', action='store_true', help='실제 실행 없이 테스트')
+    
+    args = parser.parse_args()
+    
+    try:
+        logger.info(f"스크립트 시작: {__name__}")
+        # 메인 로직
+        logger.info("스크립트 완료")
+    except Exception as e:
+        logger.error(f"스크립트 실행 중 오류: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
+
+## 🔄 주요 스크립트
+
+### 1. crawl_news.py
+```bash
+python scripts/crawl_news.py --date 2024-01-15 --source api
+python scripts/crawl_news.py --date 2024-01-15 --source entertain
+```
+
+**기능:**
+- 지정된 날짜의 네이버 뉴스 크롤링
+- 소스 선택 (api/entertain)
+- 중복 체크 및 데이터 검증
+- Supabase 저장
+
+### 2. process_openai_batch.py
+```bash
+python scripts/process_openai_batch.py --create-batch
+python scripts/process_openai_batch.py --batch-id batch_abc123
+```
+
+**기능:**
+- 미처리 기사 조회
+- OpenAI Batch API 요청 생성
+- 배치 상태 추적
+
+### 3. monitor_batches.py
+```bash
+python scripts/monitor_batches.py --check-all
+python scripts/monitor_batches.py --batch-id batch_abc123
+```
+
+**기능:**
+- 진행중인 배치 상태 확인
+- 완료된 배치 알림
+- 실패한 배치 재시도
+
+### 4. process_completed_batches.py
+```bash
+python scripts/process_completed_batches.py --batch-id batch_abc123
+python scripts/process_completed_batches.py --auto-process
+```
+
+**기능:**
+- 완료된 배치 결과 다운로드
+- 응답 파싱 및 점수 추출
+- 기사 데이터 업데이트
+
+## 📊 로깅 및 모니터링
+
+### 로그 레벨 정의
+- **DEBUG**: 상세한 디버깅 정보
+- **INFO**: 일반적인 실행 정보
+- **WARNING**: 경고 메시지
+- **ERROR**: 오류 발생
+- **CRITICAL**: 치명적인 오류
+
+### 로그 포맷
+```
+2024-01-15 10:30:45 - crawl_news - INFO - 크롤링 시작: 2024-01-15
+2024-01-15 10:30:47 - crawl_news - INFO - 처리된 기사 수: 150
+2024-01-15 10:30:48 - crawl_news - WARNING - 중복 기사 스킵: 5개
+2024-01-15 10:30:50 - crawl_news - INFO - 크롤링 완료: 2024-01-15
+```
+
+### 성능 지표 추적
+```python
+import time
+from functools import wraps
+
+def track_performance(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        execution_time = time.time() - start_time
+        logger.info(f"{func.__name__} 실행 시간: {execution_time:.2f}초")
+        return result
+    return wrapper
+```
+
+## 🛠️ 에러 핸들링
+
+### 재시도 메커니즘
+```python
+import time
+import random
+
+def retry_with_backoff(max_retries=3, base_delay=1, max_delay=60):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"최종 실패: {e}")
+                        raise
+                    
+                    delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                    logger.warning(f"재시도 {attempt + 1}/{max_retries} in {delay:.2f}초: {e}")
+                    time.sleep(delay)
+            return None
+        return wrapper
+    return decorator
+```
+
+### 알림 시스템
+```python
+def send_notification(message, level='info'):
+    """알림 발송 (슬랙, 이메일 등)"""
+    if level == 'error':
+        # 에러 알림 발송
+        pass
+    elif level == 'warning':
+        # 경고 알림 발송
+        pass
+```
+
+## 🔒 보안 및 설정
+
+### 환경 변수 관리
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+REQUIRED_ENV_VARS = [
+    'SUPABASE_URL',
+    'SUPABASE_KEY',
+    'OPENAI_API_KEY',
+    'NAVER_CLIENT_ID',
+    'NAVER_CLIENT_SECRET'
+]
+
+def validate_environment():
+    missing = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
+    if missing:
+        logger.error(f"필수 환경변수 누락: {missing}")
+        sys.exit(1)
+```
+
+### 설정 파일 검증
+```python
+def validate_config():
+    """설정 파일 유효성 검사"""
+    required_configs = ['batch_size', 'max_retries', 'timeout']
+    # 검증 로직
+```
+
+## 📅 스케줄링
+
+### Cron 설정 예시
+```bash
+# 매일 오전 9시 뉴스 크롤링
+0 9 * * * /usr/bin/python3 /path/to/scripts/crawl_news.py --date $(date +\%Y-\%m-\%d)
+
+# 매 10분마다 배치 모니터링
+*/10 * * * * /usr/bin/python3 /path/to/scripts/monitor_batches.py --check-all
+
+# 매 30분마다 완료된 배치 처리
+*/30 * * * * /usr/bin/python3 /path/to/scripts/process_completed_batches.py --auto-process
+```
+
+### GitHub Actions 통합
+```yaml
+name: Daily News Crawling
+on:
+  schedule:
+    - cron: '0 9 * * *'  # 매일 오전 9시
+  workflow_dispatch:
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crawl News
+                 run: python scripts/crawl_news.py --date $(date +%Y-%m-%d)
+```

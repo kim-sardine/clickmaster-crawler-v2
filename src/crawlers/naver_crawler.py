@@ -1,14 +1,19 @@
+"""
+네이버 뉴스 크롤러
+"""
+
 import requests
 import time
-from bs4 import BeautifulSoup
-from typing import List, Optional, Dict, Any
 import logging
+import html
+from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any
+from urllib.parse import urljoin, urlparse, parse_qs
+from bs4 import BeautifulSoup
+import pytz
 
-from ..config.settings import Settings
-from ..models.base import News
-from ..utils.logging_utils import log_api_call, log_error
-from ..utils.date_utils import parse_naver_date, is_within_date_range
-from ..utils.text_utils import clean_html, extract_main_content, is_valid_title, is_valid_content
+from src.models.article import Article
+from src.database.operations import DatabaseOperations
 
 logger = logging.getLogger(__name__)
 
@@ -16,205 +21,231 @@ logger = logging.getLogger(__name__)
 class NaverNewsCrawler:
     """네이버 뉴스 크롤러"""
 
-    def __init__(self):
+    def __init__(self, client_id: str, client_secret: str):
+        """
+        크롤러 초기화
+
+        Args:
+            client_id: 네이버 API 클라이언트 ID
+            client_secret: 네이버 API 클라이언트 시크릿
+        """
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.db_ops = DatabaseOperations()
         self.session = requests.Session()
-        self.session.headers.update(Settings.get_headers())
-        self.collected_urls = set()
+        self.session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
 
-    def search_news_by_keyword(self, keyword: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
-        """키워드로 뉴스 검색"""
+        # API 설정
+        self.api_url = "https://openapi.naver.com/v1/search/news.json"
+        self.api_headers = {"X-Naver-Client-Id": self.client_id, "X-Naver-Client-Secret": self.client_secret}
+
+    def search_news_api(
+        self, query: str, display: int = 100, start: int = 1, sort: str = "date"
+    ) -> List[Dict[str, Any]]:
+        """
+        네이버 뉴스 검색 API 호출
+
+        Args:
+            query: 검색 키워드
+            display: 검색 결과 개수 (1-100)
+            start: 검색 시작 위치 (1-1000)
+            sort: 정렬 기준 (sim, date)
+
+        Returns:
+            뉴스 검색 결과 리스트
+        """
+        params = {"query": query, "display": display, "start": start, "sort": sort}
+
         try:
-            url = "https://openapi.naver.com/v1/search/news.json"
-            log_api_call(logger, "Naver Search", f"/search/news.json?query={keyword}")
+            response = self.session.get(self.api_url, headers=self.api_headers, params=params, timeout=30)
+            response.raise_for_status()
 
-            all_news = []
-            start = 1
+            data = response.json()
+            logger.info(f"API 검색 완료: {query}, 결과 {len(data.get('items', []))}개")
+            return data.get("items", [])
 
-            while len(all_news) < Settings.MAX_NEWS_PER_KEYWORD:
-                params = {"query": keyword, "display": Settings.NAVER_DISPLAY_COUNT, "start": start, "sort": "date"}
-
-                response = self.session.get(url, params=params)
-                response.raise_for_status()
-
-                log_api_call(
-                    logger, "Naver Search", f"page {start // Settings.NAVER_DISPLAY_COUNT + 1}", response.status_code
-                )
-
-                data = response.json()
-                items = data.get("items", [])
-
-                if not items:
-                    break
-
-                # 날짜 필터링 및 중복 제거
-                filtered_items = []
-                for item in items:
-                    pub_date = parse_naver_date(item["pubDate"])
-                    if is_within_date_range(pub_date, start_date, end_date):
-                        if item["link"] not in self.collected_urls:
-                            filtered_items.append(item)
-                            self.collected_urls.add(item["link"])
-
-                all_news.extend(filtered_items)
-
-                # 다음 페이지
-                start += Settings.NAVER_DISPLAY_COUNT
-
-                # API 호출 제한 고려
-                time.sleep(Settings.REQUEST_DELAY)
-
-                # 더 이상 결과가 없으면 중단
-                if len(items) < Settings.NAVER_DISPLAY_COUNT:
-                    break
-
-            logger.info(f"🔍 Found {len(all_news)} news articles for keyword: {keyword}")
-            return all_news[: Settings.MAX_NEWS_PER_KEYWORD]
-
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API 요청 실패: {e}")
+            return []
         except Exception as e:
-            log_error(logger, e, f"searching news for keyword: {keyword}")
+            logger.error(f"API 응답 파싱 실패: {e}")
             return []
 
-    def extract_article_content(self, url: str) -> Optional[Dict[str, str]]:
-        """개별 기사 내용 추출"""
+    def extract_article_content(self, naver_url: str) -> Optional[str]:
+        """
+        네이버 뉴스 본문 추출
+
+        Args:
+            naver_url: 네이버 뉴스 URL
+
+        Returns:
+            기사 본문 또는 None
+        """
         try:
-            response = self.session.get(url, timeout=10)
+            response = self.session.get(naver_url, timeout=30)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.content, "html.parser")
 
-            # 네이버 뉴스 구조에 따른 내용 추출
+            # 기사 본문 추출 (여러 패턴 시도)
             content_selectors = [
-                "#dic_area",  # 네이버 뉴스 본문
-                ".news_end",  # 일부 언론사
-                "#articleBodyContents",  # 일부 언론사
-                ".article_body",  # 일부 언론사
-                'div[itemprop="articleBody"]',  # 일반적인 구조
-                ".article-body",  # 추가 패턴
-                ".news-article-body",  # 추가 패턴
+                "#dic_area",  # 일반 뉴스
+                ".se-main-container",  # 스마트에디터
+                ".se-component-content",  # 스마트에디터 새 버전
+                ".news_end",  # 구버전
+                "#articleBodyContents",  # 구버전
             ]
 
-            content = ""
+            content = None
             for selector in content_selectors:
-                element = soup.select_one(selector)
-                if element:
-                    content = element.get_text(strip=True)
-                    break
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    # 불필요한 태그 제거
+                    for unwanted in content_elem.find_all(["script", "style", "em", "strong"]):
+                        unwanted.decompose()
 
-            if not content:
-                # 일반적인 p 태그에서 추출 시도
-                paragraphs = soup.find_all("p")
-                content = " ".join([p.get_text(strip=True) for p in paragraphs])
+                    content = content_elem.get_text(strip=True)
+                    if len(content) >= 100:  # 최소 길이 체크
+                        break
 
-            # 기자명 추출
-            author = self._extract_author(soup)
+            if content and len(content) >= 100:
+                return content[:700]  # 최대 700자로 제한
 
-            # 언론사명 추출
-            source = self._extract_source(soup)
-
-            return {"content": content, "author": author, "source": source}
-
-        except Exception as e:
-            log_error(logger, e, f"extracting article content: {url}")
             return None
 
-    def _extract_author(self, soup: BeautifulSoup) -> Optional[str]:
-        """기자명 추출"""
-        author_selectors = [
-            ".byline",
-            ".reporter",
-            ".author",
-            "[data-reporter]",
-            ".journalist",
-            ".writer",
-            ".article-reporter",
-        ]
+        except Exception as e:
+            logger.error(f"본문 추출 실패 {naver_url}: {e}")
+            return None
 
-        for selector in author_selectors:
-            element = soup.select_one(selector)
-            if element:
-                author_text = element.get_text(strip=True)
-                # "기자" 등의 단어 제거
-                author_text = author_text.replace("기자", "").replace("특파원", "").strip()
-                if author_text:
-                    return author_text
+    def parse_api_item(self, item: Dict[str, Any]) -> Optional[Article]:
+        """
+        API 검색 결과 아이템을 Article 객체로 변환
 
-        # 텍스트에서 "XXX 기자" 패턴 찾기
-        import re
+        Args:
+            item: API 검색 결과 아이템
 
-        text = soup.get_text()
-        author_match = re.search(r"([가-힣]{2,4})\s*기자", text)
-        if author_match:
-            return author_match.group(1)
-
-        return None
-
-    def _extract_source(self, soup: BeautifulSoup) -> str:
-        """언론사명 추출"""
-        source_selectors = [
-            ".press",
-            ".source",
-            ".media",
-            "[data-press]",
-            ".news-source",
-            ".article-source",
-            ".media-name",
-        ]
-
-        for selector in source_selectors:
-            element = soup.select_one(selector)
-            if element:
-                source_text = element.get_text(strip=True)
-                if source_text:
-                    return source_text
-
-        # meta 태그에서 추출 시도
-        meta_selectors = ['meta[property="og:site_name"]', 'meta[name="author"]', 'meta[property="article:publisher"]']
-
-        for selector in meta_selectors:
-            element = soup.select_one(selector)
-            if element and element.get("content"):
-                return element.get("content")
-
-        return "Unknown"
-
-    def process_news_item(self, item: Dict[str, Any]) -> Optional[News]:
-        """뉴스 아이템을 News 객체로 변환"""
+        Returns:
+            Article 객체 또는 None
+        """
         try:
-            # 기본 정보 추출
-            title = clean_html(item["title"])
-            url = item["link"]
-            pub_date = parse_naver_date(item["pubDate"]).strftime("%Y-%m-%d")
+            # HTML 엔티티 디코딩 후 태그 제거
+            title = BeautifulSoup(html.unescape(item["title"]), "html.parser").get_text()
+            description = BeautifulSoup(html.unescape(item["description"]), "html.parser").get_text()
 
-            # 제목 유효성 검사
-            if not is_valid_title(title):
-                logger.debug(f"Invalid title: {title}")
+            # 네이버 뉴스 URL인지 확인
+            original_link = item["originallink"]
+            link = item["link"]
+
+            naver_url = link if "news.naver.com" in link else None
+            if not naver_url:
                 return None
 
-            # 상세 내용 크롤링
-            article_data = self.extract_article_content(url)
-            if not article_data:
-                return None
+            # 본문 추출
+            content = self.extract_article_content(naver_url)
+            if not content:
+                content = description  # 본문 추출 실패 시 요약 사용
 
-            content = extract_main_content(article_data["content"])
+            # 발행시간 파싱
+            pub_date_str = item["pubDate"]
+            pub_date = datetime.strptime(pub_date_str, "%a, %d %b %Y %H:%M:%S %z")
 
-            # 본문 유효성 검사
-            if not is_valid_content(content):
-                logger.debug(f"Invalid content for URL: {url}")
-                return None
+            # 한국 시간으로 변환
+            kst = pytz.timezone("Asia/Seoul")
+            pub_date = pub_date.astimezone(kst)
 
-            return News(
+            # 기자명과 언론사 추출 (간단한 패턴)
+            journalist_name = "익명"  # API에서는 기자명을 제공하지 않음
+
+            article = Article(
                 title=title,
                 content=content,
-                url=url,
-                published_date=pub_date,
-                source=article_data["source"] or "Unknown",
-                author=article_data["author"],
+                journalist_name=journalist_name,
+                publisher="네이버뉴스",  # API 결과는 일반적으로 네이버뉴스로 처리
+                published_at=pub_date,
+                naver_url=naver_url,
             )
 
+            return article
+
         except Exception as e:
-            log_error(logger, e, f"processing news item: {item.get('title', 'Unknown')}")
+            logger.error(f"아이템 파싱 실패: {e}")
             return None
 
-    def get_crawl_stats(self) -> Dict[str, int]:
-        """크롤링 통계 반환"""
-        return {"collected_urls": len(self.collected_urls)}
+    def crawl_by_keywords(self, keywords: List[str], max_articles_per_keyword: int = 100) -> List[Article]:
+        """
+        키워드별 뉴스 크롤링
+
+        Args:
+            keywords: 검색 키워드 리스트
+            max_articles_per_keyword: 키워드당 최대 기사 수
+
+        Returns:
+            크롤링된 기사 리스트
+        """
+        all_articles = []
+
+        for keyword in keywords:
+            logger.info(f"키워드 크롤링 시작: {keyword}")
+
+            try:
+                # API 검색
+                items = self.search_news_api(query=keyword, display=min(max_articles_per_keyword, 100), sort="date")
+
+                # 기사 파싱
+                for item in items:
+                    article = self.parse_api_item(item)
+                    if article:
+                        # 중복 체크
+                        if not self.db_ops.check_duplicate_article(article.naver_url):
+                            all_articles.append(article)
+                        else:
+                            logger.debug(f"중복 기사 스킵: {article.title[:50]}...")
+
+                    # Rate limiting
+                    time.sleep(0.1)
+
+                logger.info(f"키워드 '{keyword}' 크롤링 완료: {len([a for a in all_articles if keyword in str(a)])}개")
+
+                # 키워드 간 대기
+                time.sleep(1)
+
+            except Exception as e:
+                logger.error(f"키워드 '{keyword}' 크롤링 실패: {e}")
+                continue
+
+        logger.info(f"전체 크롤링 완료: {len(all_articles)}개 기사")
+        return all_articles
+
+    def crawl_and_save(self, keywords: List[str], max_articles_per_keyword: int = 100) -> int:
+        """
+        뉴스 크롤링 및 데이터베이스 저장
+
+        Args:
+            keywords: 검색 키워드 리스트
+            max_articles_per_keyword: 키워드당 최대 기사 수
+
+        Returns:
+            저장된 기사 수
+        """
+        try:
+            # 크롤링
+            articles = self.crawl_by_keywords(keywords, max_articles_per_keyword)
+
+            if not articles:
+                logger.warning("크롤링된 기사가 없습니다")
+                return 0
+
+            # 데이터베이스 저장
+            saved_articles = self.db_ops.bulk_insert_articles(articles)
+
+            logger.info(f"저장 완료: {len(saved_articles)}개 기사")
+            return len(saved_articles)
+
+        except Exception as e:
+            logger.error(f"크롤링 및 저장 실패: {e}")
+            return 0
+
+    def __del__(self):
+        """소멸자 - 세션 정리"""
+        if hasattr(self, "session"):
+            self.session.close()

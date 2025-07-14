@@ -1,93 +1,80 @@
-# GitHub Actions 워크플로우
+---
+globs: ".github/workflows/*"
+description: "GitHub Actions 워크플로우 자동화 가이드"
+---
 
-## 1. 일일 크롤링 워크플로우 (daily-crawler.yml)
+# GitHub Actions 워크플로우 자동화
 
+## 🚀 워크플로우 개요
+
+### 자동화 파이프라인
+1. **매일 뉴스 크롤링** - 오전 9시 자동 실행
+2. **배치 처리 모니터링** - 10분마다 상태 확인
+3. **완료된 배치 처리** - 30분마다 결과 처리
+4. **데이터 백업** - 매일 자정 백업
+
+### 워크플로우 구조
+```
+.github/workflows/
+├── daily-crawler.yml          # 매일 뉴스 크롤링
+├── batch-processor.yml        # 배치 처리 모니터링
+├── data-backup.yml           # 데이터 백업
+└── manual-trigger.yml        # 수동 실행 워크플로우
+```
+
+## 📅 스케줄링 워크플로우
+
+### 매일 뉴스 크롤링
 ```yaml
-name: Daily News Crawler
+name: Daily News Crawling
 on:
   schedule:
-    - cron: '0 6 * * *'  # 매일 오전 6시 UTC (한국시간 오후 3시)
-  workflow_dispatch:      # 수동 실행 가능
-    inputs:
-      target_date:
-        description: '분석할 날짜 (YYYY-MM-DD). 기본값은 어제 날짜'
-        required: false
-        type: string
+    - cron: '0 9 * * *'  # 매일 오전 9시 (UTC)
+  workflow_dispatch:     # 수동 실행 가능
 
 jobs:
-  crawl-news:
+  crawl-naver-api:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
+      
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.9'
+          
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-      - name: Run News Crawler
+          
+      - name: Crawl Naver API
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
-          if [ -n "${{ github.event.inputs.target_date }}" ]; then
-            python scripts/crawl_news.py --date ${{ github.event.inputs.target_date }}
-          else
-            python scripts/crawl_news.py
-          fi
-```
-
-## 2. 특별 뉴스 처리 워크플로우 (naksi-king-processor.yml)
-
-```yaml
-name: Naksi King Processor
-on:
-  schedule:
-    - cron: '0 12 * * *'  # 매일 정오에 실행
-  workflow_dispatch:
-    inputs:
-      offset_limit:
-        description: 'API 요청의 최대 offset 값'
-        required: false
-        default: '0'
-        type: string
-
-jobs:
-  process-naksi-king:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-      - name: Process Naksi King News
+          python scripts/crawl_news.py --date $(date +%Y-%m-%d) --source api
+          
+      - name: Crawl Naver Entertainment
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          if [ -n "${{ github.event.inputs.offset_limit }}" ]; then
-            python scripts/process_naksi_king.py --offset_limit ${{ github.event.inputs.offset_limit }}
-          else
-            python scripts/process_naksi_king.py
-          fi
+          python scripts/crawl_news.py --date $(date +%Y-%m-%d) --source entertain
+          
+      - name: Notify Results
+        if: always()
+        run: |
+          echo "크롤링 완료: $(date)"
 ```
 
-## 3. 배치 모니터링 워크플로우 (batch-monitor.yml)
-
+### 배치 처리 모니터링
 ```yaml
-name: Batch Monitor
+name: Batch Processing Monitor
 on:
   schedule:
-    - cron: '0 */2 * * *'  # 2시간마다 실행
+    - cron: '*/10 * * * *'  # 10분마다 실행
   workflow_dispatch:
 
 jobs:
@@ -95,68 +82,228 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
+      
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.9'
+          
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-      - name: Monitor Batches
+        run: pip install -r requirements.txt
+        
+      - name: Monitor Active Batches
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python scripts/monitor_batches.py
+          python scripts/monitor_batches.py --check-all
+          
       - name: Process Completed Batches
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python scripts/process_completed_batches.py
+          python scripts/process_completed_batches.py --auto-process
 ```
 
-## 필요한 GitHub Secrets
+## 🔧 수동 실행 워크플로우
 
-Repository Settings > Secrets and variables > Actions에 다음 시크릿을 추가:
+### 수동 트리거
+```yaml
+name: Manual Operations
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: '실행할 작업 선택'
+        required: true
+        default: 'crawl'
+        type: choice
+        options:
+          - crawl
+          - batch-create
+          - batch-monitor
+          - batch-process
+          - data-backup
+          
+      date:
+        description: '처리 날짜 (YYYY-MM-DD)'
+        required: false
+        type: string
+        
+      source:
+        description: '크롤링 소스 (api/entertain)'
+        required: false
+        default: 'api'
+        type: choice
+        options:
+          - api
+          - entertain
+
+jobs:
+  manual-operation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Execute Selected Operation
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          case "${{ github.event.inputs.operation }}" in
+            crawl)
+              python scripts/crawl_news.py --date "${{ github.event.inputs.date }}" --source "${{ github.event.inputs.source }}"
+              ;;
+            batch-create)
+              python scripts/process_openai_batch.py --create-batch
+              ;;
+            batch-monitor)
+              python scripts/monitor_batches.py --check-all
+              ;;
+            batch-process)
+              python scripts/process_completed_batches.py --auto-process
+              ;;
+            data-backup)
+              python scripts/backup_data.py --date "${{ github.event.inputs.date }}"
+              ;;
+          esac
+```
+
+## 🔒 보안 및 Secrets 관리
 
 ### 필수 Secrets
-- `OPENAI_API_KEY`: OpenAI API 키
-- `NAVER_CLIENT_ID`: 네이버 개발자 센터 API 클라이언트 ID  
-- `NAVER_CLIENT_SECRET`: 네이버 개발자 센터 API 클라이언트 시크릿
-- `SUPABASE_URL`: Supabase 프로젝트 URL
-- `SUPABASE_SERVICE_KEY`: Supabase 서비스 키 (관리자 권한)
+```yaml
+secrets:
+  SUPABASE_URL: "https://your-project.supabase.co"
+  SUPABASE_KEY: "your-supabase-service-role-key"
+  OPENAI_API_KEY: "sk-your-openai-api-key"
+  NAVER_CLIENT_ID: "your-naver-client-id"
+  NAVER_CLIENT_SECRET: "your-naver-client-secret"
+  SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/..."  # 선택사항
+```
 
-## 워크플로우 실행 로직
+### 환경 변수 검증
+```yaml
+- name: Validate Environment
+  run: |
+    if [ -z "$SUPABASE_URL" ]; then
+      echo "SUPABASE_URL이 설정되지 않았습니다."
+      exit 1
+    fi
+    if [ -z "$OPENAI_API_KEY" ]; then
+      echo "OPENAI_API_KEY가 설정되지 않았습니다."
+      exit 1
+    fi
+```
 
-1. **일일 크롤링**: `scripts/crawl_news.py` 실행으로 전날 네이버 뉴스를 수집하여 Supabase articles 테이블에 저장
-2. **배치 모니터링**: `scripts/monitor_batches.py` 실행으로 진행 중인 배치 상태 확인 및 새 배치 시작
-3. **완료된 배치 처리**: `scripts/process_completed_batches.py` 실행으로 배치 결과 다운로드 및 기사 점수 업데이트
-4. **특별 뉴스 처리**: `scripts/process_naksi_king.py` 실행으로 Naksi King 형태의 특별 뉴스 데이터 처리
+## 📊 모니터링 및 알림
 
-## 스크립트 분리의 장점
+### 실행 결과 알림
+```yaml
+- name: Slack Notification
+  if: always()
+  uses: 8398a7/action-slack@v3
+  with:
+    status: ${{ job.status }}
+    channel: '#news-crawler'
+    webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+    fields: repo,message,commit,author,action,eventName,ref,workflow
+```
 
-### 1. **코드 가독성**
-- YAML 파일에서 긴 파이썬 코드 제거
-- 각 스크립트의 역할과 책임이 명확
+### 에러 핸들링
+```yaml
+- name: Handle Errors
+  if: failure()
+  run: |
+    echo "워크플로우 실행 중 오류가 발생했습니다."
+    echo "로그를 확인하여 문제를 해결하세요."
+    # 에러 로그 수집 및 전송
+```
 
-### 2. **유지보수성**
-- 개별 스크립트 독립적 수정 가능
-- 로컬에서 개별 테스트 실행 가능
-- 버전 관리 및 코드 리뷰 용이
+## 🚀 배포 및 릴리스
 
-### 3. **재사용성**
-- GitHub Actions 외부에서도 스크립트 직접 실행 가능
-- 다른 CI/CD 도구에서도 동일한 스크립트 사용 가능
+### 태그 기반 배포
+```yaml
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
 
-### 4. **디버깅**
-- 각 스크립트 개별 실행으로 문제 격리 용이
-- 구조화된 로깅으로 문제 추적 개선
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+```
 
-## 실행 시간 제한 고려사항
+## 🔄 워크플로우 최적화
 
-- GitHub Actions 최대 실행 시간: 6시간
-- OpenAI 배치 완료 시간: 최대 24시간
-- 따라서 배치 시작과 완료 처리를 분리하여 구현
+### 캐싱 전략
+```yaml
+- name: Cache Dependencies
+  uses: actions/cache@v3
+  with:
+    path: ~/.cache/pip
+    key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+    restore-keys: |
+      ${{ runner.os }}-pip-
+```
+
+### 병렬 처리
+```yaml
+strategy:
+  matrix:
+    source: [api, entertain]
+    
+steps:
+  - name: Crawl News (${{ matrix.source }})
+    run: |
+      python scripts/crawl_news.py --source ${{ matrix.source }}
+```
+
+## 📈 성능 모니터링
+
+### 실행 시간 추적
+```yaml
+- name: Track Execution Time
+  run: |
+    start_time=$(date +%s)
+    python scripts/crawl_news.py --date $(date +%Y-%m-%d)
+    end_time=$(date +%s)
+    echo "실행 시간: $((end_time - start_time))초"
+```
+
+### 리소스 사용량 모니터링
+```yaml
+- name: Monitor Resources
+  run: |
+    echo "메모리 사용량:"
+    free -h
+    echo "디스크 사용량:"
+         df -h
+```

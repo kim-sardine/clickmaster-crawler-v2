@@ -1,97 +1,51 @@
 ---
 alwaysApply: true
+description: "프로젝트 전반적인 개요와 구조"
 ---
 
-# Clickmaster Crawler 프로젝트 개요
+# 클릭마스터 크롤러 - 프로젝트 개요
 
-네이버 뉴스 기사의 낚시성 제목을 분석하는 자동화 시스템입니다.
+## 🎯 프로젝트 목표
+네이버 뉴스를 크롤링하여 각 뉴스의 **Clickbait 정도를 0~100 정수 값으로 측정**하고, 판단 근거와 함께 Supabase 데이터베이스에 저장하는 시스템
 
-## 프로젝트 구조
+## 🏗️ 시스템 아키텍처
 
+### 3단계 파이프라인
+1. **뉴스 크롤링 단계** → 네이버 뉴스 데이터 수집 및 Supabase 저장
+2. **AI 분석 단계** → OpenAI Batch API를 통한 Clickbait 점수 측정
+3. **결과 처리 단계** → 배치 결과 파싱 및 뉴스 데이터 업데이트
+
+### 디렉토리 구조
 ```
 clickmaster-crawler/
-├── .github/workflows/
-│   ├── daily-crawler.yml          # 매일 오전 6시 뉴스 크롤링
-│   └── batch-processor.yml        # 매시간 배치 처리 및 완료 확인
 ├── src/
-│   ├── crawlers/
-│   │   ├── __init__.py
-│   │   └── naver_crawler.py       # 네이버 뉴스 크롤링 로직
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── processors.py          # 메인 뉴스 처리 파이프라인
-│   │   ├── news_collector.py      # 네이버 API 뉴스 수집
-│   │   └── openai_batch.py        # OpenAI 배치 API 처리
-│   ├── database/
-│   │   ├── __init__.py
-│   │   ├── supabase_client.py     # Supabase 클라이언트
-│   │   └── operations.py          # DB 조작 함수들
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── base.py                # 데이터 모델 정의 (News, AnswerFormat 등)
-│   │   └── batch_status.py        # 배치 상태 관리
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── logging_utils.py       # 로깅 유틸리티
-│   │   ├── file_utils.py          # 파일 처리 유틸리티
-│   │   ├── date_utils.py          # 날짜 처리 유틸리티
-│   │   └── text_utils.py          # 텍스트 전처리
-│   ├── config/
-│   │   ├── __init__.py
-│   │   ├── settings.py            # 설정 파일 관리
-│   │   ├── prompts.py             # AI 프롬프트 관리
-│   │   └── keywords.py            # 사전 정의된 키워드 목록
-│   └── __init__.py
-├── scripts/
-│   ├── __init__.py
-│   ├── crawl_news.py              # 뉴스 크롤링 스크립트 (GitHub Actions용)
-│   ├── monitor_batches.py         # 배치 모니터링 스크립트 (GitHub Actions용)
-│   ├── process_completed_batches.py # 완료된 배치 처리 스크립트 (GitHub Actions용)
-│   └── process_naksi_king.py      # 특별 뉴스 처리 스크립트 (GitHub Actions용)
-├── main.py                        # 메인 엔트리포인트 (로컬 실행용)
-├── naksi_king.py                  # 특별 뉴스 처리 스크립트 (로컬 실행용)
-├── requirements.txt               # Python 의존성
-├── .env.example                  # 환경변수 예시
-└── README.md                     # 프로젝트 설명
+│   ├── crawlers/          # 크롤링 로직
+│   ├── database/          # Supabase 클라이언트 및 DB 연산
+│   ├── core/              # OpenAI Batch API 핵심 로직
+│   ├── models/            # 데이터 모델
+│   ├── config/            # 설정 파일 (키워드, 프롬프트 등)
+│   └── utils/             # 공통 유틸리티
+├── scripts/               # 독립 실행 스크립트
+├── .github/workflows/     # GitHub Actions 워크플로우
+└── requirements.txt       # 의존성 목록
 ```
 
-## 워크플로우 개요
+## 🔧 핵심 기술 스택
+- **Python 3.9+** - 메인 개발 언어
+- **Supabase** - 메인 데이터베이스 (PostgreSQL)
+- **OpenAI API** - Batch API를 통한 Clickbait 점수 측정
+- **Naver Open API** - 뉴스 검색 API
+- **Requests/BeautifulSoup** - 웹 크롤링
+- **GitHub Actions** - 자동화 워크플로우
 
-### 1. 뉴스 수집 및 저장
-   - 사전 정의된 키워드를 사용하여 네이버 검색 API로 뉴스 검색
-   - 특정 날짜 범위 내 뉴스만 필터링
-   - 각 뉴스 URL을 직접 크롤링하여 기자명, 언론사, 전체 본문 수집
-   - 중복 뉴스 제거 및 정제된 뉴스 데이터를 **Supabase articles 테이블에 저장**
+## 📊 데이터 플로우
+```
+네이버 뉴스 → 크롤링 → Supabase 저장 → OpenAI Batch API → 결과 파싱 → 최종 업데이트
+```
 
-### 2. 배치 처리 시작
-   - Supabase에서 미처리 뉴스(clickbait_score가 null인 기사) 조회
-   - 진행 중인 배치가 있는지 **batch_jobs 테이블에서 확인**
-   - 새로운 배치 작업 시작 시 JSONL 형식으로 입력 파일 생성
-   - OpenAI 배치 API 호출 후 **배치 정보를 batch_jobs 테이블에 저장**
-
-### 3. 배치 후처리
-   - **batch_jobs 테이블에서 완료된 배치 작업 확인**
-   - 완료된 배치의 결과 파일 다운로드
-   - 낚시성 점수와 평가 근거를 파싱하여 **articles 테이블 업데이트**
-   - 배치 작업 상태를 'completed'로 변경
-
-## 주요 제약사항
-
-- 네이버 API 일일 호출 제한 (25,000회)
-- OpenAI 배치 완료까지 최대 24시간 소요
-- GitHub Actions 실행 시간 제한 (6시간)
-- 네이버 뉴스 크롤링 시 Rate Limiting 필요
-
-## 주요 설정
-
-### 환경변수
-- `NAVER_CLIENT_ID`: 네이버 개발자 센터 API 클라이언트 ID
-- `NAVER_CLIENT_SECRET`: 네이버 개발자 센터 API 클라이언트 시크릿
-- `OPENAI_API_KEY`: OpenAI API 키
-
-### 기본 설정
-- 최소 제목 길이: 9자
-- 최소 본문 길이: 100자
-- 최대 본문 길이: 700자
-- 네이버 API 한번에 가져올 뉴스 수: 100개
-- 최대 뉴스 수집 한도: 1,000개 (키워드당)
+## 🎨 개발 원칙
+- **모듈화**: 각 단계별로 독립적인 스크립트 작성
+- **재사용성**: 공통 로직은 utils 모듈로 분리
+- **에러 핸들링**: 각 단계별 실패 시 복구 가능한 구조
+- **로깅**: 모든 중요 작업에 대한 상세 로그 기록
+- **설정 외부화**: 환경변수 및 설정 파일을 통한 구성 관리

@@ -1,55 +1,43 @@
+"""
+애플리케이션 설정
+"""
+
 import os
 from dotenv import load_dotenv
 
-# .env 파일 로드
 load_dotenv()
 
 
 class Settings:
-    """프로젝트 설정"""
-
-    # API 설정
-    NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
-    NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    """애플리케이션 설정 클래스"""
 
     # Supabase 설정
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+    # Naver API 설정
+    NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
+    NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
+
+    # OpenAI 설정 (향후 사용)
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
     # 크롤링 설정
-    MIN_TITLE_LENGTH = 9
-    MIN_CONTENT_LENGTH = 100
-    MAX_CONTENT_LENGTH = 700
-    NAVER_DISPLAY_COUNT = 100  # 한번에 가져올 뉴스 수
-    MAX_NEWS_PER_KEYWORD = 1000  # 키워드당 최대 뉴스 수
+    DEFAULT_KEYWORDS = ["충격", "공포", "반전", "놀라운", "경악"]
+    MAX_ARTICLES_PER_KEYWORD = 50
+    CRAWL_DELAY_SECONDS = 1
 
-    # 배치 설정
-    BATCH_SIZE = 100  # OpenAI 배치 요청당 아이템 수
-    BATCH_TIMEOUT_HOURS = 24  # 배치 완료 대기 시간
-
-    # 크롤링 지연 설정
-    REQUEST_DELAY = 1.0  # 요청 간격 (초)
-    MAX_RETRIES = 3  # 최대 재시도 횟수
+    # 로깅 설정
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     @classmethod
-    def validate_required_env_vars(cls):
-        """필수 환경변수 검증"""
-        required_vars = ["NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET", "OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_KEY"]
+    def validate(cls) -> bool:
+        """필수 설정 검증"""
+        required_settings = [cls.SUPABASE_URL, cls.SUPABASE_KEY, cls.NAVER_CLIENT_ID, cls.NAVER_CLIENT_SECRET]
 
-        missing_vars = []
-        for var in required_vars:
-            if not getattr(cls, var):
-                missing_vars.append(var)
+        return all(setting is not None for setting in required_settings)
 
-        if missing_vars:
-            raise ValueError(f"필수 환경변수가 설정되지 않았습니다: {', '.join(missing_vars)}")
 
-    @classmethod
-    def get_headers(cls):
-        """네이버 API 헤더 생성"""
-        return {
-            "X-Naver-Client-Id": cls.NAVER_CLIENT_ID,
-            "X-Naver-Client-Secret": cls.NAVER_CLIENT_SECRET,
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
+# 전역 설정 인스턴스
+settings = Settings()

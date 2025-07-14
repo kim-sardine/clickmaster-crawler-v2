@@ -1,159 +1,331 @@
-# 데이터베이스 스키마
+---
+description: DB Schema
+alwaysApply: false
+---
 
-## articles 테이블
-네이버 뉴스 기사 정보를 저장하는 메인 테이블
+# Supabase 데이터베이스 스키마 설계
 
+## 📊 테이블 구조
+
+### 1. articles (기사) 테이블
 ```sql
 CREATE TABLE articles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title TEXT NOT NULL,                    -- 기사 제목
-  content TEXT NOT NULL,                  -- 기사 본문
-  naver_url TEXT NOT NULL UNIQUE,        -- 네이버 뉴스 URL
-  reporter TEXT,                          -- 기자명
-  publisher TEXT,                         -- 언론사명
-  published_date TIMESTAMP NOT NULL,     -- 발행일시
-  clickbait_score INTEGER,               -- 낚시성 점수 (0-100)
-  evaluation_reason TEXT,                -- 평가 근거
-  batch_id TEXT,                         -- 연관된 배치 ID
-  processed_at TIMESTAMP,               -- 처리 완료 시간
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  journalist_id UUID NOT NULL,
+  publisher TEXT NOT NULL,
+  clickbait_score INTEGER NOT NULL CHECK (clickbait_score >= 0 AND clickbait_score <= 100),
+  score_explanation TEXT,
+  published_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  naver_url TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-
--- 인덱스 생성
-CREATE INDEX idx_articles_published_date ON articles(published_date);
-CREATE INDEX idx_articles_batch_id ON articles(batch_id);
-CREATE INDEX idx_articles_clickbait_score ON articles(clickbait_score);
-CREATE INDEX idx_articles_naver_url ON articles(naver_url);
-CREATE INDEX idx_articles_publisher ON articles(publisher);
 ```
 
-## batch_jobs 테이블
-OpenAI 배치 작업 상태 관리
-
+### 2. journalists (기자) 테이블  
 ```sql
-CREATE TABLE batch_jobs (
+CREATE TABLE journalists (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  openai_batch_id TEXT NOT NULL UNIQUE,  -- OpenAI 배치 ID
-  status TEXT NOT NULL DEFAULT 'created', -- created, in_progress, completed, failed, cancelled
-  article_count INTEGER NOT NULL,        -- 처리할 기사 수
-  input_file_id TEXT,                    -- OpenAI 입력 파일 ID
-  output_file_id TEXT,                   -- OpenAI 출력 파일 ID
-  error_file_id TEXT,                    -- OpenAI 에러 파일 ID
-  started_at TIMESTAMP,                  -- 배치 시작 시간
-  completed_at TIMESTAMP,               -- 배치 완료 시간
-  error_message TEXT,                    -- 에러 메시지
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
+  name TEXT NOT NULL,
+  naver_uuid TEXT,
+  publisher TEXT NOT NULL,
+  article_count INTEGER DEFAULT 0,
+  average_score DECIMAL(5,2) DEFAULT 0.00,
+  max_score INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-
--- 인덱스 생성
-CREATE INDEX idx_batch_jobs_status ON batch_jobs(status);
-CREATE INDEX idx_batch_jobs_openai_batch_id ON batch_jobs(openai_batch_id);
 ```
 
-## 테이블 관계
-- `articles.batch_id` → `batch_jobs.openai_batch_id`
-- 하나의 배치 작업은 여러 기사를 처리할 수 있음
-- 기사는 하나의 배치에만 속할 수 있음
+## 🔍 인덱스 설정
 
-## 데이터 플로우
-
-### 1. 뉴스 수집 단계
+### 성능 최적화를 위한 인덱스
 ```sql
--- 새로운 뉴스 기사 삽입
-INSERT INTO articles (title, content, naver_url, reporter, publisher, published_date)
-VALUES ('기사제목', '기사내용', 'https://news.naver.com/...', '기자명', '언론사', '2024-01-01 12:00:00');
+-- 기사 테이블 인덱스
+CREATE INDEX idx_articles_clickbait_score ON articles (clickbait_score DESC);
+CREATE INDEX idx_articles_published_at ON articles (published_at DESC);
+CREATE INDEX idx_articles_journalist_id ON articles (journalist_id);
+CREATE INDEX idx_articles_title_gin ON articles USING GIN (to_tsvector('english', title));
+CREATE INDEX idx_articles_publisher ON articles (publisher);
+
+-- 기자 테이블 인덱스
+CREATE INDEX idx_journalists_average_score ON journalists (average_score DESC);
+CREATE INDEX idx_journalists_publisher ON journalists (publisher);
 ```
 
-### 2. 배치 처리 준비
+## 🔧 자동화 기능
+
+### 기자 통계 자동 업데이트 트리거
 ```sql
--- 미처리 기사 조회 (배치 처리 대상)
-SELECT id, title, content, naver_url 
-FROM articles 
-WHERE clickbait_score IS NULL 
-AND batch_id IS NULL
-LIMIT 1000;
+CREATE OR REPLACE FUNCTION update_journalist_stats()
+RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE journalists 
+  SET 
+    article_count = (
+      SELECT COUNT(*) FROM articles WHERE journalist_id = NEW.journalist_id
+    ),
+    average_score = (
+      SELECT AVG(clickbait_score) FROM articles WHERE journalist_id = NEW.journalist_id
+    ),
+    max_score = (
+      SELECT MAX(clickbait_score) FROM articles WHERE journalist_id = NEW.journalist_id
+    ),
+    updated_at = NOW()
+  WHERE id = NEW.journalist_id;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- 진행 중인 배치 확인
-SELECT * FROM batch_jobs 
-WHERE status IN ('validating', 'in_progress', 'finalizing');
+CREATE TRIGGER trigger_update_journalist_stats
+AFTER INSERT OR UPDATE ON articles
+FOR EACH ROW
+EXECUTE FUNCTION update_journalist_stats();
 ```
 
-### 3. 배치 시작
+## 📈 성능 최적화 뷰
+
+### 인기 기사 뷰 (낚시 점수 70점 이상)
 ```sql
--- 새 배치 작업 등록
-INSERT INTO batch_jobs (openai_batch_id, status, article_count, input_file_id)
-VALUES ('batch_abc123', 'validating', 500, 'file_xyz789');
-
--- 배치에 할당된 기사들 업데이트
-UPDATE articles 
-SET batch_id = 'batch_abc123'
-WHERE id IN (SELECT id FROM articles WHERE clickbait_score IS NULL LIMIT 500);
+CREATE VIEW popular_articles AS
+SELECT 
+  id,
+  title,
+  clickbait_score,
+  published_at,
+  naver_url,
+  journalist_id,
+  publisher
+FROM articles
+WHERE clickbait_score >= 70
+ORDER BY clickbait_score DESC;
 ```
 
-### 4. 배치 완료 후 결과 업데이트
+### 기자 랭킹 뷰
 ```sql
--- 배치 결과로 기사 점수 업데이트
-UPDATE articles 
-SET clickbait_score = 75, 
-    evaluation_reason = '제목이 본문 내용과 일치하지만 약간의 과장이 있음',
-    processed_at = NOW()
-WHERE naver_url = 'https://news.naver.com/specific-article';
-
--- 배치 작업 완료 처리
-UPDATE batch_jobs 
-SET status = 'completed', 
-    completed_at = NOW(),
-    output_file_id = 'output_file_123'
-WHERE openai_batch_id = 'batch_abc123';
+CREATE VIEW journalist_rankings AS
+SELECT 
+  j.id,
+  j.name,
+  j.publisher,
+  j.article_count,
+  j.average_score,
+  j.max_score,
+  j.created_at,
+  j.updated_at
+FROM journalists j
+WHERE j.article_count > 0
+ORDER BY j.average_score DESC;
 ```
 
-## Supabase 클라이언트 설정
+## 🔒 보안 정책 (RLS)
 
-### 인증 및 연결
-```python
-from supabase import create_client, Client
-
-def get_supabase_client() -> Client:
-    """Supabase 클라이언트를 생성합니다."""
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_KEY")  # 서버 사이드에서는 service key 사용
-    
-    if not url or not key:
-        raise ValueError("Supabase 환경변수가 설정되지 않았습니다.")
-    
-    return create_client(url, key)
-```
-
-### Row Level Security (RLS) 정책
+### Row Level Security 설정
 ```sql
--- articles 테이블 RLS 활성화
+-- 기사 테이블 공개 읽기 권한
 ALTER TABLE articles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Articles are viewable by everyone" ON articles
+  FOR SELECT USING (true);
 
--- 서비스 키로는 모든 작업 허용
-CREATE POLICY "Service role full access" ON articles
-FOR ALL USING (auth.role() = 'service_role');
-
--- batch_jobs 테이블도 동일하게 설정
-ALTER TABLE batch_jobs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Service role full access" ON batch_jobs
-FOR ALL USING (auth.role() = 'service_role');
+-- 기자 테이블 공개 읽기 권한  
+ALTER TABLE journalists ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Journalists are viewable by everyone" ON journalists
+  FOR SELECT USING (true);
 ```
 
-## 환경변수
+## 📊 TypeScript 타입 정의
+
+### 기본 타입
+```typescript
+export interface Article {
+  id: string;
+  title: string;
+  content: string;
+  journalist_id: string;
+  publisher: string;
+  clickbait_score: number;
+  score_explanation?: string;
+  published_at: string;
+  naver_url?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Journalist {
+  id: string;
+  name: string;
+  naver_uuid?: string;
+  publisher: string;
+  article_count: number;
+  average_score: number;
+  max_score: number;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+### 확장 타입 (조인 포함)
+```typescript
+export interface ArticleWithJournalist extends Article {
+  journalist: {
+    name: string;
+    publisher: string;
+  };
+}
+
+export interface JournalistRanking {
+  id: string;
+  name: string;
+  publisher: string;
+  article_count: number;
+  average_score: number;
+  max_score: number;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+## 🔍 주요 쿼리 패턴
+
+### 1. 기사 목록 조회 (페이지네이션)
+```sql
+SELECT 
+  a.id,
+  a.title,
+  a.clickbait_score,
+  a.published_at,
+  a.naver_url,
+  j.name as journalist_name,
+  a.publisher
+FROM articles a
+JOIN journalists j ON a.journalist_id = j.id
+ORDER BY a.published_at DESC
+LIMIT 20 OFFSET 0;
+```
+
+### 2. 기자별 기사 조회
+```sql
+SELECT 
+  a.id,
+  a.title,
+  a.clickbait_score,
+  a.published_at,
+  a.naver_url,
+  a.publisher
+FROM articles a
+WHERE a.journalist_id = $1
+ORDER BY a.published_at DESC;
+```
+
+### 3. 신문사별 기사 조회
+```sql
+SELECT 
+  a.id,
+  a.title,
+  a.clickbait_score,
+  a.published_at,
+  a.naver_url,
+  j.name as journalist_name
+FROM articles a
+JOIN journalists j ON a.journalist_id = j.id
+WHERE a.publisher = $1
+ORDER BY a.published_at DESC;
+```
+
+### 4. 인기 기사 조회 (낚시 점수 높은 순)
+```sql
+SELECT * FROM popular_articles
+LIMIT 10;
+```
+
+### 5. 기자 랭킹 조회
+```sql
+SELECT * FROM journalist_rankings
+LIMIT 20;
+```
+
+### 6. 신문사별 기자 랭킹
+```sql
+SELECT * FROM journalist_rankings
+WHERE publisher = $1
+LIMIT 10;
+```
+
+## 📦 Supabase 클라이언트 설정
+
+### 환경 변수
 ```env
-# OpenAI API (필수)
-OPENAI_API_KEY=your_openai_api_key
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
 
-# 네이버 개발자 센터 API (필수)
-NAVER_CLIENT_ID=your_naver_client_id
-NAVER_CLIENT_SECRET=your_naver_client_secret
+### 클라이언트 초기화
+```typescript
+import { createClient } from '@supabase/supabase-js';
 
-# Supabase 데이터베이스 (필수)
-SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_KEY=your_supabase_service_key  # 서버 사이드 작업용 (필수)
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-# 선택사항
-SUPABASE_ANON_KEY=your_supabase_anon_key  # 클라이언트 사이드에서만 필요
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+```
+
+## 🎯 낚시 점수 시스템
+
+### 점수 범위 및 색상
+- **0-30점**: 낮음 (Green) `#10B981`
+- **31-60점**: 보통 (Yellow) `#F59E0B`  
+- **61-100점**: 높음 (Red) `#EF4444`
+
+### 점수 색상 유틸리티 함수
+```typescript
+export function getScoreColor(score: number): string {
+  if (score <= 30) return '#10B981'; // green
+  if (score <= 60) return '#F59E0B'; // yellow
+  return '#EF4444'; // red
+}
+
+export function getScoreTextColor(score: number): string {
+  if (score <= 30) return 'text-green-600';
+  if (score <= 60) return 'text-yellow-600';
+  return 'text-red-600';
+}
+
+export function getScoreBgColor(score: number): string {
+  if (score <= 30) return 'bg-green-100';
+  if (score <= 60) return 'bg-yellow-100';
+  return 'bg-red-100';
+}
+```
+
+## 📰 신문사 목록
+
+### 현재 등록된 신문사들
+- **조선일보** - 대표적인 보수 일간지
+- **중앙일보** - 종합 일간지
+- **동아일보** - 대표적인 보수 일간지
+- **한국일보** - 종합 일간지
+- **문화일보** - 문화 중심 일간지
+- **세계일보** - 종합 일간지
+- **국민일보** - 종합 일간지
+- **서울신문** - 수도권 일간지
+- **한겨레** - 진보 성향 일간지
+- **경향신문** - 진보 성향 일간지
+
+### 신문사별 통계 조회
+```sql
+SELECT 
+  publisher,
+  COUNT(*) as total_articles,
+  AVG(clickbait_score) as avg_clickbait_score,
+  MAX(clickbait_score) as max_clickbait_score
+FROM articles 
+GROUP BY publisher
+ORDER BY avg_clickbait_score DESC;
+```
+
+  return query;
+}
 ```
