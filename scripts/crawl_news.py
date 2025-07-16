@@ -11,6 +11,7 @@ from dateutil.relativedelta import relativedelta
 
 from src.config.settings import settings
 from src.crawlers.naver_crawler import NaverNewsCrawler
+from src.utils.keywords import get_combined_keywords
 
 # 로깅 설정
 logging.basicConfig(
@@ -66,10 +67,6 @@ def validate_date_format(date_string: str) -> datetime:
 def main():
     """메인 함수"""
     parser = argparse.ArgumentParser(description="네이버 뉴스 크롤링")
-    parser.add_argument("--keywords", nargs="*", default=settings.DEFAULT_KEYWORDS, help="검색 키워드 목록")
-    parser.add_argument(
-        "--max-per-keyword", type=int, default=settings.MAX_ARTICLES_PER_KEYWORD, help="키워드당 최대 기사 수"
-    )
     parser.add_argument(
         "--date",
         type=str,
@@ -82,8 +79,11 @@ def main():
 
     try:
         logger.info(f"크롤링 시작: {__name__}")
-        logger.info(f"키워드: {args.keywords}")
-        logger.info(f"키워드당 최대 기사 수: {args.max_per_keyword}")
+
+        # Google Trends + 기본 키워드 조합 가져오기
+        keywords = get_combined_keywords()
+        logger.info(f"키워드: {keywords}")
+        logger.info("모든 기사 크롤링 (무제한)")
 
         # 날짜 파라미터 검증 (이제 필수값)
         target_date = validate_date_format(args.date)
@@ -101,8 +101,7 @@ def main():
             logger.info("DRY RUN 모드 - 실제 저장하지 않습니다")
             # 크롤링만 수행하고 저장하지 않음 (중복 체크도 하지 않음)
             articles = crawler.crawl_by_keywords(
-                keywords=args.keywords,
-                max_articles_per_keyword=args.max_per_keyword,
+                keywords=keywords,
                 target_date=target_date,
                 check_duplicates=False,
             )
@@ -110,9 +109,7 @@ def main():
             saved_count = len(articles)
         else:
             # 크롤링 및 저장 (중복 체크 포함)
-            saved_count = crawler.crawl_and_save(
-                keywords=args.keywords, max_articles_per_keyword=args.max_per_keyword, target_date=target_date
-            )
+            saved_count = crawler.crawl_and_save(keywords=keywords, target_date=target_date)
 
         logger.info(f"크롤링 완료: {saved_count}개 기사 처리")
 

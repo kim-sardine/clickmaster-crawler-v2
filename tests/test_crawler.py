@@ -244,7 +244,7 @@ class TestNaverNewsCrawler:
         # Mock 중복 체크 (중복 없음)
         crawler.db_ops.check_duplicate_article.return_value = False
 
-        result = crawler.crawl_by_keywords(["충격"], max_articles_per_keyword=10)
+        result = crawler.crawl_by_keywords(["충격"])
 
         assert len(result) == 2
         assert result[0].title == "충격적인 뉴스 1번입니다 테스트용으로 작성됨"
@@ -295,7 +295,7 @@ class TestNaverNewsCrawler:
         mock_parse_item.side_effect = [mock_article1, mock_article2, mock_article3]
         crawler.db_ops.check_duplicate_article.return_value = False
 
-        result = crawler.crawl_by_keywords(["충격"], max_articles_per_keyword=10, target_date=target_date)
+        result = crawler.crawl_by_keywords(["충격"], target_date=target_date)
 
         # 대상 날짜(2024-01-15)의 기사만 포함되어야 함
         assert len(result) == 1
@@ -336,7 +336,7 @@ class TestNaverNewsCrawler:
         mock_parse_item.side_effect = [mock_article1, mock_article2]
 
         # check_duplicates=False로 호출 (dry-run 모드)
-        result = crawler.crawl_by_keywords(["테스트"], max_articles_per_keyword=10, check_duplicates=False)
+        result = crawler.crawl_by_keywords(["테스트"], check_duplicates=False)
 
         # 중복 체크를 하지 않았으므로 check_duplicate_article이 호출되지 않아야 함
         crawler.db_ops.check_duplicate_article.assert_not_called()
@@ -383,7 +383,7 @@ class TestNaverNewsCrawler:
         crawler.db_ops.check_duplicate_article.side_effect = [False, True]
 
         # check_duplicates=True로 호출 (기본값)
-        result = crawler.crawl_by_keywords(["테스트"], max_articles_per_keyword=10, check_duplicates=True)
+        result = crawler.crawl_by_keywords(["테스트"], check_duplicates=True)
 
         # 중복 체크가 2번 호출되어야 함
         assert crawler.db_ops.check_duplicate_article.call_count == 2
@@ -414,12 +414,10 @@ class TestNaverNewsCrawler:
         # Mock 저장 결과
         crawler.db_ops.bulk_insert_articles.return_value = [{"id": "article-123"}]
 
-        result = crawler.crawl_and_save(["충격"], max_articles_per_keyword=10)
+        result = crawler.crawl_and_save(["충격"])
 
         assert result == 1
-        mock_crawl.assert_called_once_with(
-            keywords=["충격"], max_articles_per_keyword=10, target_date=None, check_duplicates=True
-        )
+        mock_crawl.assert_called_once_with(keywords=["충격"], target_date=None, check_duplicates=True)
 
     @patch.object(NaverNewsCrawler, "crawl_by_keywords")
     def test_crawl_and_save_with_date_filter(self, mock_crawl, crawler):
@@ -441,12 +439,10 @@ class TestNaverNewsCrawler:
         mock_crawl.return_value = mock_articles
         crawler.db_ops.bulk_insert_articles.return_value = [{"id": "article-123"}]
 
-        result = crawler.crawl_and_save(["충격"], max_articles_per_keyword=10, target_date=target_date)
+        result = crawler.crawl_and_save(["충격"], target_date=target_date)
 
         assert result == 1
-        mock_crawl.assert_called_once_with(
-            keywords=["충격"], max_articles_per_keyword=10, target_date=target_date, check_duplicates=True
-        )
+        mock_crawl.assert_called_once_with(keywords=["충격"], target_date=target_date, check_duplicates=True)
 
     @patch.object(NaverNewsCrawler, "crawl_by_keywords")
     def test_crawl_and_save_no_articles(self, mock_crawl, crawler):

@@ -346,7 +346,6 @@ class NaverNewsCrawler:
     def crawl_by_keywords(
         self,
         keywords: List[str],
-        max_articles_per_keyword: int = 100,
         target_date: Optional[datetime] = None,
         check_duplicates: bool = True,
     ) -> List[Article]:
@@ -355,7 +354,6 @@ class NaverNewsCrawler:
 
         Args:
             keywords: 검색 키워드 리스트
-            max_articles_per_keyword: 키워드당 최대 기사 수
             target_date: 특정 날짜 필터링 (None이면 모든 날짜)
             check_duplicates: 중복 기사 체크 여부 (기본값: True)
 
@@ -374,9 +372,9 @@ class NaverNewsCrawler:
             try:
                 keyword_articles = []
                 start = 1
-                display = min(100, max_articles_per_keyword)  # API 최대 100개씩 요청
+                display = 100  # API 최대 100개씩 요청
 
-                while len(keyword_articles) < max_articles_per_keyword:
+                while True:
                     # API 검색 (날짜순 정렬)
                     items = self.search_news_api(query=keyword, display=display, start=start, sort="date")
 
@@ -420,11 +418,6 @@ class NaverNewsCrawler:
                             # 중복 체크 없이 모든 기사 추가
                             current_batch_articles.append(article)
 
-                        # 최대 개수 도달하면 중단
-                        if len(keyword_articles) + len(current_batch_articles) >= max_articles_per_keyword:
-                            should_stop = True
-                            break
-
                         # Rate limiting
                         time.sleep(0.1)
 
@@ -459,14 +452,15 @@ class NaverNewsCrawler:
         return all_articles
 
     def crawl_and_save(
-        self, keywords: List[str], max_articles_per_keyword: int = 100, target_date: Optional[datetime] = None
+        self,
+        keywords: List[str],
+        target_date: Optional[datetime] = None,
     ) -> int:
         """
         뉴스 크롤링 및 데이터베이스 저장
 
         Args:
             keywords: 검색 키워드 리스트
-            max_articles_per_keyword: 키워드당 최대 기사 수
             target_date: 특정 날짜 필터링 (None이면 모든 날짜)
 
         Returns:
@@ -476,7 +470,6 @@ class NaverNewsCrawler:
             # 크롤링 (중복 체크 포함)
             articles = self.crawl_by_keywords(
                 keywords=keywords,
-                max_articles_per_keyword=max_articles_per_keyword,
                 target_date=target_date,
                 check_duplicates=True,
             )

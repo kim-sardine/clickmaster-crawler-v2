@@ -30,7 +30,6 @@ class Settings:
         "발칵",
         "최근 한 온라인 커뮤니티",
     ]
-    MAX_ARTICLES_PER_KEYWORD = 100
     CRAWL_DELAY_SECONDS = 0.5
 
     # 로깅 설정
