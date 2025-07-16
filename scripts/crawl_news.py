@@ -8,11 +8,6 @@ import logging
 import argparse
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
-from pathlib import Path
-
-# 프로젝트 루트를 Python 경로에 추가
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from src.config.settings import settings
 from src.crawlers.naver_crawler import NaverNewsCrawler
@@ -22,7 +17,6 @@ logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
     format=settings.LOG_FORMAT,
     handlers=[
-        logging.FileHandler(f"logs/crawl_news_{datetime.now().strftime('%Y%m%d')}.log"),
         logging.StreamHandler(sys.stdout),
     ],
 )

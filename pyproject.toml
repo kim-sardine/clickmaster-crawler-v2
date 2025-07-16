@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clickmaster-crawler"
+version = "0.1.0"
+description = "네이버 뉴스 Clickbait 측정 크롤러"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests==2.32.4",
+    "beautifulsoup4==4.13.4",
+    "supabase==2.16.0",
+    "python-dotenv==1.1.1",
+    "lxml==6.0.0",
+    "pytz==2025.2",
+    "python-dateutil==2.9.0"
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==8.4.1",
+    "pytest-asyncio==1.0.0"
+]
+dev = [
+    "playwright==1.53.0"
+]
+
+[project.scripts]
+crawl-news = "scripts.crawl_news:main"
+sync-journalist-stats = "scripts.sync_journalist_stats:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "scripts*"]
+exclude = ["tests*"] 

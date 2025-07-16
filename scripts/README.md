@@ -9,16 +9,16 @@
 
 ```bash
 # 기본 실행 (필수: --date 파라미터)
-python scripts/crawl_news.py --date 2024-01-15
+python -m scripts.crawl_news --date 2024-01-15
 
 # 키워드 지정
-python scripts/crawl_news.py --date 2024-01-15 --keywords "AI" "머신러닝" "딥러닝"
+python -m scripts.crawl_news --date 2024-01-15 --keywords "AI" "머신러닝" "딥러닝"
 
 # 기사 수 제한
-python scripts/crawl_news.py --date 2024-01-15 --max-per-keyword 50
+python -m scripts.crawl_news --date 2024-01-15 --max-per-keyword 50
 
 # 테스트 모드 (저장하지 않음)
-python scripts/crawl_news.py --date 2024-01-15 --dry-run
+python -m scripts.crawl_news --date 2024-01-15 --dry-run
 ```
 
 ### 2. `sync_journalist_stats.py` - 기자 통계 동기화
@@ -26,19 +26,19 @@ python scripts/crawl_news.py --date 2024-01-15 --dry-run
 
 ```bash
 # 기본 실행 (통계 불일치 수정)
-python scripts/sync_journalist_stats.py
+python -m scripts.sync_journalist_stats
 
 # 전체 기자 통계 강제 업데이트
-python scripts/sync_journalist_stats.py --full-update
+python -m scripts.sync_journalist_stats --full-update
 
 # 통계 불일치 수정 비활성화
-python scripts/sync_journalist_stats.py --no-fix-inconsistencies
+python -m scripts.sync_journalist_stats --no-fix-inconsistencies
 
 # 조용한 모드 (요약 출력 생략)
-python scripts/sync_journalist_stats.py --quiet
+python -m scripts.sync_journalist_stats --quiet
 
 # 디버그 모드
-python scripts/sync_journalist_stats.py --log-level DEBUG
+python -m scripts.sync_journalist_stats --log-level DEBUG
 ```
 
 ## 🚀 기자 통계 동기화 스크립트 상세

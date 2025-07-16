@@ -3,12 +3,12 @@
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from datetime import datetime
 
-from src.database.supabase_client import SupabaseClient, get_supabase_client
+from src.database.supabase_client import SupabaseClient
 from src.database.operations import DatabaseOperations
-from src.models.article import Article, Journalist
+from src.models.article import Article
 
 
 class TestSupabaseClient:
@@ -71,7 +71,7 @@ class TestSupabaseClient:
 
         client = SupabaseClient(url="https://test.supabase.co", key="test-key")
 
-        assert client.test_connection() == True
+        assert client.test_connection() is True
 
     @patch("src.database.supabase_client.create_client")
     def test_connection_test_failure(self, mock_create_client):
@@ -82,7 +82,7 @@ class TestSupabaseClient:
 
         client = SupabaseClient(url="https://test.supabase.co", key="test-key")
 
-        assert client.test_connection() == False
+        assert client.test_connection() is False
 
 
 class TestDatabaseOperations:
@@ -225,7 +225,7 @@ class TestDatabaseOperations:
         db_ops = DatabaseOperations()
         result = db_ops.check_duplicate_article("https://n.news.naver.com/article/023/0003123456")
 
-        assert result == True
+        assert result is True
 
     def test_check_duplicate_article_not_exists(self, mock_client):
         """중복 기사 미존재 테스트"""
@@ -241,7 +241,7 @@ class TestDatabaseOperations:
         db_ops = DatabaseOperations()
         result = db_ops.check_duplicate_article("https://n.news.naver.com/article/023/0003123456")
 
-        assert result == False
+        assert result is False
 
     def test_insert_article_success(self, mock_client):
         """기사 삽입 성공 테스트"""
@@ -309,30 +309,32 @@ class TestDatabaseOperations:
         db_ops = DatabaseOperations()
         result = db_ops.update_article_score("article-123", 75, "중간 수준의 낚시성 제목")
 
-        assert result == True
+        assert result is True
 
     def test_bulk_insert_articles_with_caching(self, mock_client):
         """기자 캐싱이 포함된 배치 삽입 테스트"""
         # get_or_create_journalist Mock
         with patch.object(DatabaseOperations, "get_or_create_journalist") as mock_get_journalist:
-            # 첫 번째 기자 (홍길동)
+            # 기자 정보 Mock 설정
             mock_get_journalist.side_effect = [
                 {"id": "journalist-1", "name": "홍길동", "publisher": "조선일보"},  # 첫 번째 호출
                 {"id": "journalist-2", "name": "김철수", "publisher": "중앙일보"},  # 두 번째 호출
                 # 세 번째 기사는 홍길동이므로 캐시에서 가져와서 호출되지 않음
             ]
 
-            # 기사 삽입 Mock
+            # 배치 삽입 Mock 설정 (한 번의 호출로 모든 기사 삽입)
             mock_table = Mock()
             mock_insert = Mock()
 
             mock_client.table.return_value = mock_table
             mock_table.insert.return_value = mock_insert
-            mock_insert.execute.side_effect = [
-                Mock(data=[{"id": "article-1", "title": "기사 1"}]),
-                Mock(data=[{"id": "article-2", "title": "기사 2"}]),
-                Mock(data=[{"id": "article-3", "title": "기사 3"}]),
-            ]
+            mock_insert.execute.return_value = Mock(
+                data=[
+                    {"id": "article-1", "title": "기사 1", "journalist_id": "journalist-1"},
+                    {"id": "article-2", "title": "기사 2", "journalist_id": "journalist-2"},
+                    {"id": "article-3", "title": "기사 3", "journalist_id": "journalist-1"},
+                ]
+            )
 
             db_ops = DatabaseOperations()
 
@@ -375,6 +377,18 @@ class TestDatabaseOperations:
             # (홍길동, 김철수 각각 1번씩만 조회, 세 번째 홍길동은 캐시 사용)
             assert mock_get_journalist.call_count == 2
 
+            # 배치 삽입이 한 번만 호출되었는지 확인
+            mock_table.insert.assert_called_once()
+
+            # 배치 삽입에 전달된 데이터 검증
+            call_args = mock_table.insert.call_args[0][0]  # 첫 번째 인수
+            assert len(call_args) == 3  # 3개 기사 데이터
+
+            # 각 기사에 올바른 기자 ID가 설정되었는지 확인
+            assert call_args[0]["journalist_id"] == "journalist-1"  # 홍길동
+            assert call_args[1]["journalist_id"] == "journalist-2"  # 김철수
+            assert call_args[2]["journalist_id"] == "journalist-1"  # 홍길동 (캐시 사용)
+
     def test_bulk_insert_articles_empty_list(self, mock_client):
         """빈 기사 리스트 배치 삽입 테스트"""
         db_ops = DatabaseOperations()
@@ -383,21 +397,24 @@ class TestDatabaseOperations:
         assert result == []
 
     def test_bulk_insert_articles_partial_failure(self, mock_client):
-        """일부 기사 삽입 실패 테스트"""
+        """배치 삽입 실패 시 개별 삽입 폴백 테스트"""
         # get_or_create_journalist Mock
         with patch.object(DatabaseOperations, "get_or_create_journalist") as mock_get_journalist:
             mock_get_journalist.return_value = {"id": "journalist-1", "name": "홍길동", "publisher": "조선일보"}
 
-            # 기사 삽입 Mock (두 번째 기사는 실패)
+            # 배치 삽입 Mock 설정 - 첫 번째 시도는 실패
             mock_table = Mock()
             mock_insert = Mock()
 
             mock_client.table.return_value = mock_table
             mock_table.insert.return_value = mock_insert
+
+            # 배치 삽입은 실패하고, 개별 삽입 폴백에서는 2개 성공, 1개 실패
             mock_insert.execute.side_effect = [
-                Mock(data=[{"id": "article-1", "title": "기사 1"}]),  # 성공
-                Exception("삽입 실패"),  # 실패
-                Mock(data=[{"id": "article-3", "title": "기사 3"}]),  # 성공
+                Exception("배치 삽입 실패"),  # 첫 번째 배치 삽입 실패
+                Mock(data=[{"id": "article-1", "title": "기사 1"}]),  # 개별 삽입 1번째 성공
+                Exception("삽입 실패"),  # 개별 삽입 2번째 실패
+                Mock(data=[{"id": "article-3", "title": "기사 3"}]),  # 개별 삽입 3번째 성공
             ]
 
             db_ops = DatabaseOperations()
@@ -431,10 +448,13 @@ class TestDatabaseOperations:
 
             result = db_ops.bulk_insert_articles(articles)
 
-            # 3개 중 2개만 성공
+            # 배치 삽입 실패 후 개별 삽입으로 폴백하여 3개 중 2개만 성공
             assert len(result) == 2
             assert result[0]["id"] == "article-1"
             assert result[1]["id"] == "article-3"
+
+            # 총 4번 호출 (배치 1번 + 개별 3번)
+            assert mock_insert.execute.call_count == 4
 
     def test_fix_inconsistent_stats_no_issues(self, mock_client):
         """통계 불일치가 없는 경우 테스트"""

@@ -23,7 +23,13 @@ class Settings:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
     # 크롤링 설정
-    DEFAULT_KEYWORDS = ["충격", "공포", "반전", "놀라운", "경악"]
+    DEFAULT_KEYWORDS = [
+        "논란",
+        "충격",
+        "경악",
+        "발칵",
+        "최근 한 온라인 커뮤니티",
+    ]
     MAX_ARTICLES_PER_KEYWORD = 100
     CRAWL_DELAY_SECONDS = 0.5
 

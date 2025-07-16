@@ -1,0 +1,80 @@
+name: Daily News Crawling
+
+on:
+  schedule:
+    # 한국시간 매일 아침 6시 = UTC 전날 21시
+    - cron: '0 21 * * *'
+  workflow_dispatch:  # 수동 실행 가능
+    inputs:
+      date:
+        description: '크롤링할 날짜 (YYYY-MM-DD, 비어있으면 전날 사용)'
+        required: false
+        type: string
+      dry_run:
+        description: '테스트 모드 (실제 저장하지 않음)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  crawl-news:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+
+      
+    - name: Calculate target date
+      id: date
+      run: |
+        if [ -n "${{ github.event.inputs.date }}" ]; then
+          # 수동 실행 시 입력된 날짜 사용
+          TARGET_DATE="${{ github.event.inputs.date }}"
+          echo "Manual date input: ${TARGET_DATE}"
+        else
+          # 자동 실행 시 한국시간 기준으로 전날 날짜 계산
+          TARGET_DATE=$(TZ=Asia/Seoul date -d "yesterday" +%Y-%m-%d)
+          echo "Auto calculated previous day (KST): ${TARGET_DATE}"
+        fi
+        echo "target_date=${TARGET_DATE}" >> $GITHUB_OUTPUT
+        
+    - name: Run news crawling
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+        NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      run: |
+        # 기본 명령어 구성 (모듈 형태로 실행)
+        CMD="python -m scripts.crawl_news --date ${{ steps.date.outputs.target_date }}"
+        
+        # dry-run 옵션 추가
+        if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          CMD="${CMD} --dry-run"
+          echo "Running in DRY RUN mode"
+        fi
+        
+        echo "Executing: ${CMD}"
+        ${CMD}
+        
+ 

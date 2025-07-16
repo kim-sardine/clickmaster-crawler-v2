@@ -104,7 +104,7 @@ class DatabaseOperations:
 
     def bulk_insert_articles(self, articles: List[Article]) -> List[Dict[str, Any]]:
         """
-        기사 배치 삽입 (기자 정보 캐싱으로 성능 최적화)
+        기사 배치 삽입 (Supabase 배치 삽입 활용)
 
         Args:
             articles: 기사 리스트
@@ -116,11 +116,97 @@ class DatabaseOperations:
             logger.warning("삽입할 기사가 없습니다")
             return []
 
-        # 기자 정보 캐싱을 위한 딕셔너리
+        logger.info(f"배치 삽입 시작: {len(articles)}개 기사")
+
+        try:
+            # 1단계: 모든 기자 정보를 미리 처리하고 캐싱 (순서 보장)
+            journalist_cache = {}
+            unique_journalists = []
+            seen_journalists = set()
+
+            # 기사 순서대로 고유한 기자들을 수집 (순서 보장)
+            for article in articles:
+                journalist_tuple = (article.journalist_name, article.publisher)
+                if journalist_tuple not in seen_journalists:
+                    unique_journalists.append(journalist_tuple)
+                    seen_journalists.add(journalist_tuple)
+
+            logger.info(f"처리할 고유 기자 수: {len(unique_journalists)}")
+
+            # 고유 기자들에 대해 순서대로 조회/생성
+            for journalist_name, publisher in unique_journalists:
+                journalist_key = f"{journalist_name}_{publisher}"
+                try:
+                    journalist = self.get_or_create_journalist(journalist_name, publisher)
+                    journalist_cache[journalist_key] = journalist
+                    logger.debug(f"기자 정보 처리: {journalist_name} ({publisher}) - ID: {journalist['id']}")
+                except Exception as e:
+                    logger.error(f"기자 정보 처리 실패 [{journalist_name}, {publisher}]: {e}")
+                    # 실패한 기자의 기사들은 제외하고 계속 진행
+                    continue
+
+            # 2단계: 기사 데이터 준비 (배치 삽입용)
+            articles_data = []
+            skipped_count = 0
+
+            for article in articles:
+                journalist_key = f"{article.journalist_name}_{article.publisher}"
+
+                if journalist_key not in journalist_cache:
+                    logger.warning(f"기자 정보가 없어 기사 제외: {article.title[:50]}...")
+                    skipped_count += 1
+                    continue
+
+                # 기사에 기자 ID 설정
+                article.journalist_id = journalist_cache[journalist_key]["id"]
+                article_data = article.to_dict()
+                articles_data.append(article_data)
+
+            if not articles_data:
+                logger.warning("삽입할 수 있는 기사가 없습니다")
+                return []
+
+            logger.info(f"배치 삽입 준비 완료: {len(articles_data)}개 기사 (제외: {skipped_count}개)")
+
+            # 3단계: Supabase 배치 삽입 실행
+            result = self.client.client.table("articles").insert(articles_data).execute()
+
+            if result.data:
+                inserted_count = len(result.data)
+                logger.info(f"배치 삽입 완료: {inserted_count}개 기사 성공")
+
+                # 처리된 기자 정보 로깅
+                logger.info(f"처리된 기자 수: {len(journalist_cache)}명")
+                for journalist_key, journalist_info in journalist_cache.items():
+                    name, publisher = journalist_key.split("_", 1)
+                    logger.info(f"  - {name} ({publisher}): ID {journalist_info['id']}")
+
+                return result.data
+            else:
+                logger.error("배치 삽입 실패 - 응답 데이터 없음")
+                return []
+
+        except Exception as e:
+            logger.error(f"배치 삽입 실행 오류: {e}")
+
+            # 오류 발생 시 개별 삽입으로 폴백
+            logger.info("개별 삽입으로 폴백 시작...")
+            return self._fallback_individual_insert(articles)
+
+    def _fallback_individual_insert(self, articles: List[Article]) -> List[Dict[str, Any]]:
+        """
+        배치 삽입 실패 시 개별 삽입으로 폴백
+
+        Args:
+            articles: 기사 리스트
+
+        Returns:
+            삽입된 기사 정보 리스트
+        """
         journalist_cache = {}
         inserted_articles = []
 
-        logger.info(f"배치 삽입 시작: {len(articles)}개 기사")
+        logger.warning("개별 삽입 모드로 진행합니다...")
 
         for i, article in enumerate(articles, 1):
             try:
@@ -134,7 +220,6 @@ class DatabaseOperations:
                     logger.debug(f"기자 정보 캐싱: {article.journalist_name} ({article.publisher})")
                 else:
                     journalist = journalist_cache[journalist_key]
-                    logger.debug(f"기자 정보 캐시 히트: {article.journalist_name} ({article.publisher})")
 
                 # 기사에 기자 ID 설정
                 article.journalist_id = journalist["id"]
@@ -153,16 +238,7 @@ class DatabaseOperations:
                 logger.error(f"기사 삽입 실패 ({i}/{len(articles)}): {article.title[:50]}... - {e}")
                 continue
 
-        # 캐시 통계 로깅
-        total_journalists = len(journalist_cache)
-        logger.info(f"배치 삽입 완료: {len(inserted_articles)}/{len(articles)}개 기사, {total_journalists}명 기자 처리")
-
-        if journalist_cache:
-            logger.info("처리된 기자 목록:")
-            for journalist_key, journalist_info in journalist_cache.items():
-                name, publisher = journalist_key.split("_", 1)
-                logger.info(f"  - {name} ({publisher}): ID {journalist_info['id']}")
-
+        logger.info(f"개별 삽입 완료: {len(inserted_articles)}/{len(articles)}개 기사")
         return inserted_articles
 
     def check_duplicate_article(self, naver_url: str) -> bool:

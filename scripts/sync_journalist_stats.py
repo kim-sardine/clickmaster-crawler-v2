@@ -9,12 +9,8 @@ import sys
 import logging
 import argparse
 from datetime import datetime
-from pathlib import Path
-import traceback
 
-# 프로젝트 루트를 Python 경로에 추가
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+import traceback
 
 from src.config.settings import settings
 from src.database.operations import DatabaseOperations
@@ -22,19 +18,11 @@ from src.database.operations import DatabaseOperations
 
 def setup_logging(log_level: str = "INFO") -> logging.Logger:
     """로깅 설정"""
-    # logs 디렉토리 생성
-    logs_dir = project_root / "logs"
-    logs_dir.mkdir(exist_ok=True)
-
-    # 로그 파일 경로
-    log_file = logs_dir / f"sync_journalist_stats_{datetime.now().strftime('%Y%m%d')}.log"
-
     # 로깅 설정
     logging.basicConfig(
         level=getattr(logging, log_level.upper()),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
             logging.StreamHandler(sys.stdout),
         ],
     )
@@ -162,9 +150,9 @@ def print_result_summary(result: dict):
     """실행 결과 요약 출력"""
     logger = logging.getLogger(__name__)
 
-    print("\n" + "=" * 60)
-    print("📊 기자 통계 동기화 결과 요약")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("📊 기자 통계 동기화 결과 요약")
+    logger.info("=" * 60)
 
     # 실행 시간
     start_time = datetime.fromisoformat(result["start_time"])

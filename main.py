@@ -15,7 +15,6 @@ logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
     format=settings.LOG_FORMAT,
     handlers=[
-        logging.FileHandler(f"logs/main_{datetime.now().strftime('%Y%m%d')}.log"),
         logging.StreamHandler(sys.stdout),
     ],
 )

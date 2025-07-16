@@ -19,7 +19,13 @@
 ### 기본 키워드 목록 ✅ 구현완료
 ```python
 # src/config/settings.py에서 구현됨
-DEFAULT_KEYWORDS = ["충격", "공포", "반전", "놀라운", "경악"]
+DEFAULT_KEYWORDS = [
+    "논란",
+    "충격",
+    "경악",
+    "발칵",
+    "최근 한 온라인 커뮤니티",
+]
 MAX_ARTICLES_PER_KEYWORD = 100
 CRAWL_DELAY_SECONDS = 0.5
 ```
@@ -202,121 +208,6 @@ PUBLISHER_SCORE_ADJUSTMENTS = {
 }
 ```
 
-## 🔧 설정 관리
-
-### 환경별 설정 ✅ 부분 구현
-```python
-# src/config/settings.py (현재 구현된 부분)
-import os
-
-class Settings:
-    # 크롤링 설정
-    DEFAULT_KEYWORDS = ["충격", "공포", "반전", "놀라운", "경악"]
-    MAX_ARTICLES_PER_KEYWORD = 100
-    CRAWL_DELAY_SECONDS = 0.5
-
-    # 로깅 설정
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-    LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-```
-
-### 확장 설정 관리 ❌ 미구현 (향후 계획)
-```python
-# src/config/settings.py (향후 확장)
-class Config:
-    def __init__(self):
-        self.env = os.getenv('ENV', 'development')
-        self.load_config()
-    
-    def load_config(self):
-        if self.env == 'production':
-            self.batch_size = 1000
-            self.max_tokens = 300
-            self.temperature = 0.1
-        else:
-            self.batch_size = 100
-            self.max_tokens = 500
-            self.temperature = 0.0
-```
-
-### 키워드 업데이트 전략 ❌ 미구현 (향후 계획)
-```python
-# src/config/keyword_manager.py (미구현)
-def update_keywords_based_on_performance():
-    """성과 기반 키워드 업데이트"""
-    # 낮은 점수를 받은 키워드 제거
-    # 높은 점수를 받은 키워드 가중치 증가
-    # 새로운 트렌드 키워드 추가
-    pass
-```
-
-## 🧪 A/B 테스트 ❌ 미구현
-
-### 프롬프트 A/B 테스트 (향후 구현)
-```python
-# src/config/ab_test.py (미구현)
-import random
-
-def ab_test_prompt(article_data):
-    """프롬프트 A/B 테스트"""
-    
-    if random.random() < 0.5:
-        return PROMPT_VERSIONS["v1.0"]
-    else:
-        return PROMPT_VERSIONS["v1.1"]
-```
-
-### 결과 분석 ❌ 미구현 (향후 계획)
-```python
-# src/config/ab_test.py (미구현)
-def analyze_prompt_performance():
-    """프롬프트 성능 분석"""
-    # 버전별 점수 분포 분석
-    # 응답 품질 평가
-    # 토큰 사용량 비교
-    pass
-```
-
-## 📈 품질 보증 ❌ 미구현
-
-### 프롬프트 검증 (향후 구현)
-```python
-# src/config/validation.py (미구현)
-def validate_prompt_response(response):
-    """프롬프트 응답 검증"""
-    # 점수 범위 검증 (0-100)
-    # 응답 형식 검증
-    # 근거 존재 여부 확인
-    return is_valid, error_message
-```
-
-### 이상 점수 탐지 ❌ 미구현 (향후 계획)
-```python
-# src/config/anomaly_detection.py (미구현)
-def detect_anomalous_scores():
-    """이상 점수 탐지"""
-    # 평균에서 크게 벗어난 점수
-    # 일관성 없는 점수 패턴
-    # 특정 언론사 편향 점수
-    pass
-```
-
-## 📋 구현 우선순위
-
-### Phase 1: 프롬프트 시스템 기반 (즉시 필요)
-1. ❌ `src/config/prompts.py` 생성
-2. ❌ 기본 프롬프트 템플릿 구현
-3. ❌ 프롬프트 버전 관리
-
-### Phase 2: 키워드 확장 (선택사항)
-1. ❌ 확장 키워드 시스템
-2. ❌ 언론사별 특화 키워드
-3. ❌ 동적 키워드 업데이트
-
-### Phase 3: 고급 기능 (향후)
-1. ❌ A/B 테스트 시스템
-2. ❌ 점수 분석 및 검증
-3. ❌ 이상 탐지 시스템
 
 ## 🔗 현재 사용 가능한 기능
 
