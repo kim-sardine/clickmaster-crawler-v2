@@ -71,6 +71,145 @@ class DatabaseOperations:
             logger.error(f"기자 조회/생성 오류 [{name}, {publisher}]: {e}")
             raise
 
+    def get_or_create_journalists_batch(self, journalist_specs: List[tuple]) -> Dict[str, Dict[str, Any]]:
+        """
+        기자들을 배치로 조회/생성 (성능 최적화)
+
+        Args:
+            journalist_specs: (name, publisher) 튜플 리스트
+
+        Returns:
+            키가 "name_publisher" 형태인 기자 정보 딕셔너리
+        """
+        try:
+            if not journalist_specs:
+                return {}
+
+            # 1단계: 기자명 정규화 및 유니크한 기자들 수집
+            normalized_specs = []
+            unique_keys = set()
+
+            for name, publisher in journalist_specs:
+                # 정규화
+                name = name.strip()
+                publisher = publisher.strip()
+
+                # 익명 기자 처리
+                if name in ["익명", "기자", "", " "]:
+                    name = f"익명기자_{publisher}"
+
+                journalist_key = f"{name}_{publisher}"
+                if journalist_key not in unique_keys:
+                    normalized_specs.append((name, publisher))
+                    unique_keys.add(journalist_key)
+
+            if not normalized_specs:
+                return {}
+
+            logger.info(f"배치 기자 처리 시작: {len(normalized_specs)}명")
+
+            # 2단계: 기존 기자들 일괄 조회 (진짜 배치 처리)
+            existing_journalists = {}
+            if normalized_specs:
+                # 모든 이름과 출판사를 수집
+                all_names = list(set([name for name, publisher in normalized_specs]))
+                all_publishers = list(set([publisher for name, publisher in normalized_specs]))
+
+                logger.info(f"배치 기자 조회: {len(all_names)}개 이름, {len(all_publishers)}개 출판사")
+
+                try:
+                    # 한 번의 쿼리로 모든 관련 기자들 조회
+                    result = (
+                        self.client.client.table("journalists")
+                        .select("*")
+                        .in_("name", all_names)
+                        .in_("publisher", all_publishers)
+                        .execute()
+                    )
+
+                    # 클라이언트에서 정확한 (name, publisher) 조합 필터링
+                    target_combinations = set(normalized_specs)
+                    for journalist in result.data:
+                        journalist_combo = (journalist["name"], journalist["publisher"])
+                        if journalist_combo in target_combinations:
+                            key = f"{journalist['name']}_{journalist['publisher']}"
+                            existing_journalists[key] = journalist
+
+                    logger.info(f"기존 기자 조회 완료: {len(existing_journalists)}명 (단일 쿼리)")
+
+                except Exception as e:
+                    logger.error(f"배치 기자 조회 실패: {e}")
+                    # 실패 시 개별 조회로 폴백
+                    logger.warning("개별 기자 조회로 폴백합니다...")
+                    for name, publisher in normalized_specs:
+                        try:
+                            result = (
+                                self.client.client.table("journalists")
+                                .select("*")
+                                .eq("name", name)
+                                .eq("publisher", publisher)
+                                .execute()
+                            )
+
+                            for journalist in result.data:
+                                key = f"{journalist['name']}_{journalist['publisher']}"
+                                existing_journalists[key] = journalist
+
+                        except Exception as individual_e:
+                            logger.warning(f"개별 기자 조회 실패 [{name}, {publisher}]: {individual_e}")
+                            continue
+
+            # 3단계: 새로 생성할 기자들 식별
+            new_journalists_data = []
+            for name, publisher in normalized_specs:
+                journalist_key = f"{name}_{publisher}"
+                if journalist_key not in existing_journalists:
+                    journalist = Journalist(name=name, publisher=publisher)
+                    new_journalists_data.append(journalist.to_dict())
+
+            # 4단계: 새 기자들 배치 생성
+            if new_journalists_data:
+                logger.info(f"새 기자 배치 생성: {len(new_journalists_data)}명")
+                try:
+                    result = self.client.client.table("journalists").insert(new_journalists_data).execute()
+
+                    if result.data:
+                        # 새로 생성된 기자들을 기존 기자 딕셔너리에 추가
+                        for journalist in result.data:
+                            key = f"{journalist['name']}_{journalist['publisher']}"
+                            existing_journalists[key] = journalist
+                            logger.debug(
+                                f"🆕 새 기자 생성: {journalist['name']} ({journalist['publisher']}) - ID: {journalist['id']}"
+                            )
+                    else:
+                        logger.error("배치 기자 생성 실패 - 응답 데이터 없음")
+
+                except Exception as e:
+                    logger.error(f"배치 기자 생성 실패: {e}")
+                    # 실패 시 개별 생성으로 폴백
+                    for journalist_data in new_journalists_data:
+                        try:
+                            individual_result = (
+                                self.client.client.table("journalists").insert(journalist_data).execute()
+                            )
+                            if individual_result.data:
+                                journalist = individual_result.data[0]
+                                key = f"{journalist['name']}_{journalist['publisher']}"
+                                existing_journalists[key] = journalist
+                                logger.info(f"🆕 개별 기자 생성: {journalist['name']} ({journalist['publisher']})")
+                        except Exception as individual_e:
+                            logger.error(
+                                f"개별 기자 생성 실패 [{journalist_data['name']}, {journalist_data['publisher']}]: {individual_e}"
+                            )
+                            continue
+
+            logger.info(f"배치 기자 처리 완료: 총 {len(existing_journalists)}명")
+            return existing_journalists
+
+        except Exception as e:
+            logger.error(f"배치 기자 처리 오류: {e}")
+            return {}
+
     def insert_article(self, article: Article) -> Dict[str, Any]:
         """
         기사 삽입
@@ -119,8 +258,7 @@ class DatabaseOperations:
         logger.info(f"배치 삽입 시작: {len(articles)}개 기사")
 
         try:
-            # 1단계: 모든 기자 정보를 미리 처리하고 캐싱 (순서 보장)
-            journalist_cache = {}
+            # 1단계: 모든 기자 정보를 배치로 처리
             unique_journalists = []
             seen_journalists = set()
 
@@ -133,17 +271,8 @@ class DatabaseOperations:
 
             logger.info(f"처리할 고유 기자 수: {len(unique_journalists)}")
 
-            # 고유 기자들에 대해 순서대로 조회/생성
-            for journalist_name, publisher in unique_journalists:
-                journalist_key = f"{journalist_name}_{publisher}"
-                try:
-                    journalist = self.get_or_create_journalist(journalist_name, publisher)
-                    journalist_cache[journalist_key] = journalist
-                    logger.debug(f"기자 정보 처리: {journalist_name} ({publisher}) - ID: {journalist['id']}")
-                except Exception as e:
-                    logger.error(f"기자 정보 처리 실패 [{journalist_name}, {publisher}]: {e}")
-                    # 실패한 기자의 기사들은 제외하고 계속 진행
-                    continue
+            # 배치로 기자 조회/생성
+            journalist_cache = self.get_or_create_journalists_batch(unique_journalists)
 
             # 2단계: 기사 데이터 준비 (배치 삽입용)
             articles_data = []
@@ -187,37 +316,48 @@ class DatabaseOperations:
                 return []
 
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"배치 삽입 실행 오류: {e}")
+
+            # unique constraint 위반 오류인지 확인
+            if "23505" in error_msg or "duplicate key value" in error_msg:
+                logger.warning("배치 삽입 중 중복 키 오류 발생 - 개별 삽입으로 중복 항목 스킵")
 
             # 오류 발생 시 개별 삽입으로 폴백
             logger.info("개별 삽입으로 폴백 시작...")
-            return self._fallback_individual_insert(articles)
+            return self._fallback_individual_insert(articles, journalist_cache)
 
-    def _fallback_individual_insert(self, articles: List[Article]) -> List[Dict[str, Any]]:
+    def _fallback_individual_insert(
+        self, articles: List[Article], journalist_cache: Dict[str, Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """
         배치 삽입 실패 시 개별 삽입으로 폴백
 
         Args:
             articles: 기사 리스트
+            journalist_cache: 이미 처리된 기자 캐시
 
         Returns:
             삽입된 기사 정보 리스트
         """
-        journalist_cache = {}
         inserted_articles = []
 
         logger.warning("개별 삽입 모드로 진행합니다...")
+        logger.info(f"기자 캐시 재사용: {len(journalist_cache)}명")
 
         for i, article in enumerate(articles, 1):
             try:
                 # 기자 캐시 키 생성 (이름 + 언론사)
                 journalist_key = f"{article.journalist_name}_{article.publisher}"
 
-                # 캐시에서 기자 정보 조회
+                # 캐시에서 기자 정보 조회 (이미 배치로 처리된 캐시 사용)
                 if journalist_key not in journalist_cache:
+                    # 예상치 못한 경우에만 개별 조회 (이론적으로 발생하지 않아야 함)
+                    logger.warning(
+                        f"캐시에 없는 기자 발견 - 개별 조회: {article.journalist_name} ({article.publisher})"
+                    )
                     journalist = self.get_or_create_journalist(article.journalist_name, article.publisher)
                     journalist_cache[journalist_key] = journalist
-                    logger.debug(f"기자 정보 캐싱: {article.journalist_name} ({article.publisher})")
                 else:
                     journalist = journalist_cache[journalist_key]
 
@@ -232,7 +372,8 @@ class DatabaseOperations:
                     inserted_articles.append(result.data[0])
                     logger.debug(f"기사 삽입 완료 ({i}/{len(articles)}): {article.title[:50]}...")
                 else:
-                    logger.warning(f"기사 삽입 실패 ({i}/{len(articles)}): {article.title[:50]}...")
+                    error_msg = str(result.error) if result.error else "알 수 없는 오류"
+                    logger.warning(f"기사 삽입 실패 ({i}/{len(articles)}): {article.title[:50]}... - {error_msg}")
 
             except Exception as e:
                 logger.error(f"기사 삽입 실패 ({i}/{len(articles)}): {article.title[:50]}... - {e}")

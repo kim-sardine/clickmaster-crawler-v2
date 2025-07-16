@@ -415,16 +415,30 @@ class NaverNewsCrawler:
 
                     # 2단계: 배치 중복 체크
                     if check_duplicates and parsed_articles:
-                        # 모든 URL을 수집하여 한 번에 중복 체크
-                        naver_urls = [article.naver_url for article in parsed_articles]
+                        # 2-1단계: 배치 내 중복 URL 제거 (같은 배치에서 중복된 naver_url 처리)
+                        seen_urls = set()
+                        deduplicated_articles = []
+
+                        for article in parsed_articles:
+                            if article.naver_url not in seen_urls:
+                                deduplicated_articles.append(article)
+                                seen_urls.add(article.naver_url)
+                            else:
+                                logger.debug(f"배치 내 중복 URL 제거: {article.title[:50]}...")
+
+                        if len(deduplicated_articles) < len(parsed_articles):
+                            logger.info(f"배치 내 중복 제거: {len(parsed_articles)}개 → {len(deduplicated_articles)}개")
+
+                        # 2-2단계: 데이터베이스와 중복 체크
+                        naver_urls = [article.naver_url for article in deduplicated_articles]
                         duplicate_status = self.db_ops.check_duplicate_articles_batch(naver_urls)
 
                         # 중복이 아닌 기사들만 추가
-                        for article in parsed_articles:
+                        for article in deduplicated_articles:
                             if not duplicate_status.get(article.naver_url, False):
                                 current_batch_articles.append(article)
                             else:
-                                logger.debug(f"중복 기사 스킵: {article.title[:50]}...")
+                                logger.debug(f"DB 중복 기사 스킵: {article.title[:50]}...")
 
                         logger.info(
                             f"배치 중복 체크 완료: {len(parsed_articles)}개 중 {len(current_batch_articles)}개 신규"

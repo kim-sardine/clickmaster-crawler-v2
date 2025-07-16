@@ -402,6 +402,75 @@ class TestNaverNewsCrawler:
         assert len(result) == 1
         assert result[0].title == "테스트 뉴스 1번입니다 충분히 긴 제목으로 작성함"
 
+    @patch.object(NaverNewsCrawler, "search_news_api")
+    @patch.object(NaverNewsCrawler, "parse_api_item")
+    def test_crawl_by_keywords_batch_duplicate_removal(self, mock_parse_item, mock_search_api, crawler):
+        """배치 내 중복 URL 제거 테스트"""
+        # Mock API 검색 결과
+        mock_search_api.side_effect = [
+            [{"title": "테스트 뉴스 1"}, {"title": "테스트 뉴스 1 중복"}, {"title": "테스트 뉴스 2"}],
+            [],
+        ]
+
+        long_content = "이것은 테스트 기사 내용입니다. 충분히 긴 내용이 포함되어 있습니다. 100자 이상이 되도록 더 많은 내용을 추가했습니다. 확실히 100자를 넘기기 위해 추가적인 텍스트를 더 넣어보겠습니다."
+
+        # Mock 파싱 결과 - 첫 번째와 두 번째가 같은 URL
+        mock_article1 = Article(
+            title="테스트 뉴스 1번입니다 충분히 긴 제목으로 작성함",
+            content=long_content,
+            journalist_name="익명",
+            publisher="네이버뉴스",
+            published_at=datetime.now(pytz.timezone("Asia/Seoul")),
+            naver_url="https://n.news.naver.com/article/023/0003123456",  # 같은 URL
+        )
+
+        mock_article2 = Article(
+            title="테스트 뉴스 1 중복입니다 충분히 긴 제목으로 작성함",
+            content=long_content,
+            journalist_name="익명",
+            publisher="네이버뉴스",
+            published_at=datetime.now(pytz.timezone("Asia/Seoul")),
+            naver_url="https://n.news.naver.com/article/023/0003123456",  # 같은 URL (중복)
+        )
+
+        mock_article3 = Article(
+            title="테스트 뉴스 2번입니다 충분히 긴 제목으로 작성함",
+            content=long_content,
+            journalist_name="익명",
+            publisher="네이버뉴스",
+            published_at=datetime.now(pytz.timezone("Asia/Seoul")),
+            naver_url="https://n.news.naver.com/article/421/0007123456",  # 다른 URL
+        )
+
+        mock_parse_item.side_effect = [mock_article1, mock_article2, mock_article3]
+
+        # 배치 중복 체크 설정: 모든 기사가 신규 (배치 내 중복 제거 후)
+        crawler.db_ops.check_duplicate_articles_batch.return_value = {
+            "https://n.news.naver.com/article/023/0003123456": False,
+            "https://n.news.naver.com/article/421/0007123456": False,
+        }
+
+        result = crawler.crawl_by_keywords(["테스트"], check_duplicates=True)
+
+        # 배치 내 중복이 제거되어 2개 기사만 반환되어야 함
+        assert len(result) == 2
+
+        # URL이 유니크한지 확인
+        urls = [article.naver_url for article in result]
+        assert len(set(urls)) == 2
+
+        # 첫 번째 기사가 우선 선택되었는지 확인
+        assert "https://n.news.naver.com/article/023/0003123456" in urls
+        assert "https://n.news.naver.com/article/421/0007123456" in urls
+
+        # 배치 중복 체크가 중복 제거된 URL들로만 호출되었는지 확인
+        call_args = crawler.db_ops.check_duplicate_articles_batch.call_args[0][0]
+        assert len(call_args) == 2
+        assert set(call_args) == {
+            "https://n.news.naver.com/article/023/0003123456",
+            "https://n.news.naver.com/article/421/0007123456",
+        }
+
     @patch.object(NaverNewsCrawler, "crawl_by_keywords")
     def test_crawl_and_save_success(self, mock_crawl, crawler):
         """크롤링 및 저장 성공 테스트"""

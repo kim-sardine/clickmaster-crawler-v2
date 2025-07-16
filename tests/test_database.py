@@ -31,7 +31,10 @@ class TestSupabaseClient:
 
     def test_client_initialization_missing_env_vars(self):
         """환경변수 누락 시 오류 테스트"""
-        with patch.dict("os.environ", {}, clear=True):
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("src.database.supabase_client.load_dotenv"),
+        ):  # load_dotenv() 호출 무효화
             with pytest.raises(ValueError, match="SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY 환경변수가 필요합니다"):
                 SupabaseClient()
 
@@ -319,6 +322,174 @@ class TestDatabaseOperations:
         expected = {"https://n.news.naver.com/article/023/0003123456": False}
         assert result == expected
 
+    def test_get_or_create_journalists_batch_mixed(self, mock_client):
+        """배치 기자 조회/생성 테스트 - 일부 기존, 일부 신규"""
+        # Mock 설정 - 기존 기자 조회
+        mock_table = Mock()
+        mock_select = Mock()
+        mock_eq_name = Mock()
+        mock_eq_publisher = Mock()
+
+        mock_client.table.return_value = mock_table
+        mock_table.select.return_value = mock_select
+        mock_select.eq.return_value = mock_eq_name
+        mock_eq_name.eq.return_value = mock_eq_publisher
+
+        # 첫 번째 기자는 기존, 두 번째는 없음, 세 번째는 기존
+        mock_eq_publisher.execute.side_effect = [
+            Mock(data=[{"id": "journalist-1", "name": "기자A", "publisher": "언론사1"}]),  # 기존
+            Mock(data=[]),  # 없음
+            Mock(data=[{"id": "journalist-3", "name": "기자C", "publisher": "언론사2"}]),  # 기존
+        ]
+
+        # 새 기자 배치 생성 Mock
+        mock_insert = Mock()
+        mock_table.insert.return_value = mock_insert
+        mock_insert.execute.return_value = Mock(data=[{"id": "journalist-2", "name": "기자B", "publisher": "언론사1"}])
+
+        db_ops = DatabaseOperations()
+        journalist_specs = [
+            ("기자A", "언론사1"),  # 기존
+            ("기자B", "언론사1"),  # 신규
+            ("기자C", "언론사2"),  # 기존
+        ]
+
+        result = db_ops.get_or_create_journalists_batch(journalist_specs)
+
+        # 모든 기자가 결과에 포함되어야 함
+        assert len(result) == 3
+        assert "기자A_언론사1" in result
+        assert "기자B_언론사1" in result
+        assert "기자C_언론사2" in result
+
+        # 배치 생성이 한 번 호출되어야 함 (기자B만)
+        mock_table.insert.assert_called_once()
+
+    def test_get_or_create_journalists_batch_all_existing(self, mock_client):
+        """배치 기자 조회/생성 테스트 - 모두 기존"""
+        # Mock 설정 - 모든 기자가 기존에 존재
+        mock_table = Mock()
+        mock_select = Mock()
+        mock_eq_name = Mock()
+        mock_eq_publisher = Mock()
+
+        mock_client.table.return_value = mock_table
+        mock_table.select.return_value = mock_select
+        mock_select.eq.return_value = mock_eq_name
+        mock_eq_name.eq.return_value = mock_eq_publisher
+
+        mock_eq_publisher.execute.side_effect = [
+            Mock(data=[{"id": "journalist-1", "name": "기자A", "publisher": "언론사1"}]),
+            Mock(data=[{"id": "journalist-2", "name": "기자B", "publisher": "언론사2"}]),
+        ]
+
+        db_ops = DatabaseOperations()
+        journalist_specs = [("기자A", "언론사1"), ("기자B", "언론사2")]
+
+        result = db_ops.get_or_create_journalists_batch(journalist_specs)
+
+        assert len(result) == 2
+        assert "기자A_언론사1" in result
+        assert "기자B_언론사2" in result
+
+        # 새 기자 생성이 호출되지 않아야 함
+        mock_table.insert.assert_not_called()
+
+    def test_get_or_create_journalists_batch_all_new(self, mock_client):
+        """배치 기자 조회/생성 테스트 - 모두 신규"""
+        # Mock 설정 - 기존 기자 없음
+        mock_table = Mock()
+        mock_select = Mock()
+        mock_eq_name = Mock()
+        mock_eq_publisher = Mock()
+        mock_insert = Mock()
+
+        mock_client.table.return_value = mock_table
+        mock_table.select.return_value = mock_select
+        mock_select.eq.return_value = mock_eq_name
+        mock_eq_name.eq.return_value = mock_eq_publisher
+        mock_table.insert.return_value = mock_insert
+
+        # 기존 기자 조회 - 모두 없음
+        mock_eq_publisher.execute.return_value = Mock(data=[])
+
+        # 배치 생성 성공
+        mock_insert.execute.return_value = Mock(
+            data=[
+                {"id": "journalist-1", "name": "기자A", "publisher": "언론사1"},
+                {"id": "journalist-2", "name": "기자B", "publisher": "언론사2"},
+            ]
+        )
+
+        db_ops = DatabaseOperations()
+        journalist_specs = [("기자A", "언론사1"), ("기자B", "언론사2")]
+
+        result = db_ops.get_or_create_journalists_batch(journalist_specs)
+
+        assert len(result) == 2
+        assert "기자A_언론사1" in result
+        assert "기자B_언론사2" in result
+
+        # 배치 생성이 한 번 호출되어야 함
+        mock_table.insert.assert_called_once()
+
+    def test_get_or_create_journalists_batch_anonymous_normalization(self, mock_client):
+        """배치 기자 조회/생성 테스트 - 익명 기자 정규화"""
+        # Mock 설정
+        mock_table = Mock()
+        mock_select = Mock()
+        mock_eq_name = Mock()
+        mock_eq_publisher = Mock()
+        mock_insert = Mock()
+
+        mock_client.table.return_value = mock_table
+        mock_table.select.return_value = mock_select
+        mock_select.eq.return_value = mock_eq_name
+        mock_eq_name.eq.return_value = mock_eq_publisher
+        mock_table.insert.return_value = mock_insert
+
+        # 기존 기자 없음
+        mock_eq_publisher.execute.return_value = Mock(data=[])
+
+        # 배치 생성 성공
+        mock_insert.execute.return_value = Mock(
+            data=[
+                {"id": "journalist-1", "name": "익명기자_언론사1", "publisher": "언론사1"},
+                {"id": "journalist-2", "name": "익명기자_언론사2", "publisher": "언론사2"},
+            ]
+        )
+
+        db_ops = DatabaseOperations()
+        journalist_specs = [
+            ("익명", "언론사1"),  # 익명 -> 익명기자_언론사1
+            ("", "언론사2"),  # 빈 문자열 -> 익명기자_언론사2
+        ]
+
+        result = db_ops.get_or_create_journalists_batch(journalist_specs)
+
+        assert len(result) == 2
+        assert "익명기자_언론사1_언론사1" in result
+        assert "익명기자_언론사2_언론사2" in result
+
+    def test_get_or_create_journalists_batch_empty(self, mock_client):
+        """배치 기자 조회/생성 테스트 - 빈 리스트"""
+        db_ops = DatabaseOperations()
+        result = db_ops.get_or_create_journalists_batch([])
+        assert result == {}
+
+    def test_get_or_create_journalists_batch_error_handling(self, mock_client):
+        """배치 기자 조회/생성 에러 테스트"""
+        # Mock 설정 - 에러 발생
+        mock_client.table.side_effect = Exception("Database error")
+
+        db_ops = DatabaseOperations()
+        journalist_specs = [("기자A", "언론사1")]
+
+        result = db_ops.get_or_create_journalists_batch(journalist_specs)
+
+        # 에러 시 빈 딕셔너리 반환
+        assert result == {}
+
     def test_insert_article_success(self, mock_client):
         """기사 삽입 성공 테스트"""
         # get_or_create_journalist Mock
@@ -389,14 +560,13 @@ class TestDatabaseOperations:
 
     def test_bulk_insert_articles_with_caching(self, mock_client):
         """기자 캐싱이 포함된 배치 삽입 테스트"""
-        # get_or_create_journalist Mock
-        with patch.object(DatabaseOperations, "get_or_create_journalist") as mock_get_journalist:
-            # 기자 정보 Mock 설정
-            mock_get_journalist.side_effect = [
-                {"id": "journalist-1", "name": "홍길동", "publisher": "조선일보"},  # 첫 번째 호출
-                {"id": "journalist-2", "name": "김철수", "publisher": "중앙일보"},  # 두 번째 호출
-                # 세 번째 기사는 홍길동이므로 캐시에서 가져와서 호출되지 않음
-            ]
+        # get_or_create_journalists_batch Mock
+        with patch.object(DatabaseOperations, "get_or_create_journalists_batch") as mock_batch_journalist:
+            # 배치 기자 처리 결과
+            mock_batch_journalist.return_value = {
+                "홍길동_조선일보": {"id": "journalist-1", "name": "홍길동", "publisher": "조선일보"},
+                "김철수_중앙일보": {"id": "journalist-2", "name": "김철수", "publisher": "중앙일보"},
+            }
 
             # 배치 삽입 Mock 설정 (한 번의 호출로 모든 기사 삽입)
             mock_table = Mock()
@@ -449,21 +619,26 @@ class TestDatabaseOperations:
             assert result[1]["id"] == "article-2"
             assert result[2]["id"] == "article-3"
 
-            # 기자 조회가 캐싱으로 인해 2번만 호출되었는지 확인
-            # (홍길동, 김철수 각각 1번씩만 조회, 세 번째 홍길동은 캐시 사용)
-            assert mock_get_journalist.call_count == 2
+            # 배치 기자 처리가 한 번만 호출되었는지 확인
+            mock_batch_journalist.assert_called_once()
+
+            # 배치 기자 처리에 전달된 고유 기자 조합 확인
+            batch_call_args = mock_batch_journalist.call_args[0][0]  # 첫 번째 인수
+            assert len(batch_call_args) == 2  # 고유 기자 조합 수: 홍길동+조선일보, 김철수+중앙일보
+            assert ("홍길동", "조선일보") in batch_call_args
+            assert ("김철수", "중앙일보") in batch_call_args
 
             # 배치 삽입이 한 번만 호출되었는지 확인
             mock_table.insert.assert_called_once()
 
             # 배치 삽입에 전달된 데이터 검증
-            call_args = mock_table.insert.call_args[0][0]  # 첫 번째 인수
-            assert len(call_args) == 3  # 3개 기사 데이터
+            insert_call_args = mock_table.insert.call_args[0][0]  # 첫 번째 인수
+            assert len(insert_call_args) == 3  # 3개 기사 데이터
 
             # 각 기사에 올바른 기자 ID가 설정되었는지 확인
-            assert call_args[0]["journalist_id"] == "journalist-1"  # 홍길동
-            assert call_args[1]["journalist_id"] == "journalist-2"  # 김철수
-            assert call_args[2]["journalist_id"] == "journalist-1"  # 홍길동 (캐시 사용)
+            assert insert_call_args[0]["journalist_id"] == "journalist-1"  # 홍길동
+            assert insert_call_args[1]["journalist_id"] == "journalist-2"  # 김철수
+            assert insert_call_args[2]["journalist_id"] == "journalist-1"  # 홍길동 (배치 처리로 동일 ID)
 
     def test_bulk_insert_articles_empty_list(self, mock_client):
         """빈 기사 리스트 배치 삽입 테스트"""
@@ -474,9 +649,11 @@ class TestDatabaseOperations:
 
     def test_bulk_insert_articles_partial_failure(self, mock_client):
         """배치 삽입 실패 시 개별 삽입 폴백 테스트"""
-        # get_or_create_journalist Mock
-        with patch.object(DatabaseOperations, "get_or_create_journalist") as mock_get_journalist:
-            mock_get_journalist.return_value = {"id": "journalist-1", "name": "홍길동", "publisher": "조선일보"}
+        # get_or_create_journalists_batch Mock
+        with patch.object(DatabaseOperations, "get_or_create_journalists_batch") as mock_batch_journalist:
+            mock_batch_journalist.return_value = {
+                "홍길동_조선일보": {"id": "journalist-1", "name": "홍길동", "publisher": "조선일보"}
+            }
 
             # 배치 삽입 Mock 설정 - 첫 번째 시도는 실패
             mock_table = Mock()
@@ -485,52 +662,63 @@ class TestDatabaseOperations:
             mock_client.table.return_value = mock_table
             mock_table.insert.return_value = mock_insert
 
-            # 배치 삽입은 실패하고, 개별 삽입 폴백에서는 2개 성공, 1개 실패
+            # 배치 삽입은 실패하고, 폴백에서 개별 처리
             mock_insert.execute.side_effect = [
                 Exception("배치 삽입 실패"),  # 첫 번째 배치 삽입 실패
                 Mock(data=[{"id": "article-1", "title": "기사 1"}]),  # 개별 삽입 1번째 성공
-                Exception("삽입 실패"),  # 개별 삽입 2번째 실패
+                Exception("개별 삽입 실패"),  # 개별 삽입 2번째 실패
                 Mock(data=[{"id": "article-3", "title": "기사 3"}]),  # 개별 삽입 3번째 성공
             ]
 
-            db_ops = DatabaseOperations()
+            # 폴백에서 사용할 개별 기자 조회/생성 Mock (이제는 호출되지 않아야 함)
+            with patch.object(DatabaseOperations, "get_or_create_journalist") as mock_individual_journalist:
+                mock_individual_journalist.return_value = {
+                    "id": "journalist-1",
+                    "name": "홍길동",
+                    "publisher": "조선일보",
+                }
 
-            articles = [
-                Article(
-                    title="테스트 기사 제목1입니다",
-                    content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다. 더 추가해보겠습니다.",
-                    journalist_name="홍길동",
-                    publisher="조선일보",
-                    published_at=datetime.now(),
-                    naver_url="https://n.news.naver.com/article/023/0003123456",
-                ),
-                Article(
-                    title="테스트 기사 제목2입니다",
-                    content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다. 더 추가해보겠습니다.",
-                    journalist_name="홍길동",
-                    publisher="조선일보",
-                    published_at=datetime.now(),
-                    naver_url="https://n.news.naver.com/article/023/0003123457",
-                ),
-                Article(
-                    title="테스트 기사 제목3입니다",
-                    content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다. 더 추가해보겠습니다.",
-                    journalist_name="홍길동",
-                    publisher="조선일보",
-                    published_at=datetime.now(),
-                    naver_url="https://n.news.naver.com/article/023/0003123458",
-                ),
-            ]
+                db_ops = DatabaseOperations()
 
-            result = db_ops.bulk_insert_articles(articles)
+                articles = [
+                    Article(
+                        title="테스트 기사 제목1입니다",
+                        content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다. 더 추가해보겠습니다.",
+                        journalist_name="홍길동",
+                        publisher="조선일보",
+                        published_at=datetime.now(),
+                        naver_url="https://n.news.naver.com/article/023/0003123456",
+                    ),
+                    Article(
+                        title="테스트 기사 제목2입니다",
+                        content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다. 더 추가해보겠습니다.",
+                        journalist_name="홍길동",
+                        publisher="조선일보",
+                        published_at=datetime.now(),
+                        naver_url="https://n.news.naver.com/article/023/0003123457",
+                    ),
+                    Article(
+                        title="테스트 기사 제목3입니다",
+                        content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다. 더 추가해보겠습니다.",
+                        journalist_name="홍길동",
+                        publisher="조선일보",
+                        published_at=datetime.now(),
+                        naver_url="https://n.news.naver.com/article/023/0003123458",
+                    ),
+                ]
 
-            # 배치 삽입 실패 후 개별 삽입으로 폴백하여 3개 중 2개만 성공
-            assert len(result) == 2
-            assert result[0]["id"] == "article-1"
-            assert result[1]["id"] == "article-3"
+                result = db_ops.bulk_insert_articles(articles)
 
-            # 총 4번 호출 (배치 1번 + 개별 3번)
-            assert mock_insert.execute.call_count == 4
+                # 배치 삽입 실패 후 폴백으로 2개 성공
+                assert len(result) == 2
+                assert result[0]["id"] == "article-1"
+                assert result[1]["id"] == "article-3"
+
+                # 배치 기자 처리가 호출되었는지 확인
+                mock_batch_journalist.assert_called_once()
+
+                # 개별 기자 조회가 호출되지 않았는지 확인 (캐시 재사용으로 인해)
+                assert mock_individual_journalist.call_count == 0, "기자 캐시 재사용으로 개별 조회가 발생하지 않아야 함"
 
     def test_fix_inconsistent_stats_no_issues(self, mock_client):
         """통계 불일치가 없는 경우 테스트"""
