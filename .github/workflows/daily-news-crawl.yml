@@ -64,6 +64,7 @@ jobs:
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
         NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
       run: |
         # 기본 명령어 구성 (모듈 형태로 실행)
         CMD="python -m scripts.crawl_news --date ${{ steps.date.outputs.target_date }}"
