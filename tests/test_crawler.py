@@ -241,8 +241,11 @@ class TestNaverNewsCrawler:
 
         mock_parse_item.side_effect = [mock_article1, mock_article2]
 
-        # Mock 중복 체크 (중복 없음)
-        crawler.db_ops.check_duplicate_article.return_value = False
+        # Mock 배치 중복 체크 (모두 신규)
+        crawler.db_ops.check_duplicate_articles_batch.return_value = {
+            "https://n.news.naver.com/article/023/0003123456": False,
+            "https://n.news.naver.com/article/421/0007123456": False,
+        }
 
         result = crawler.crawl_by_keywords(["충격"])
 
@@ -293,7 +296,11 @@ class TestNaverNewsCrawler:
         )
 
         mock_parse_item.side_effect = [mock_article1, mock_article2, mock_article3]
-        crawler.db_ops.check_duplicate_article.return_value = False
+
+        # Mock 배치 중복 체크 (날짜 필터링된 기사들만)
+        crawler.db_ops.check_duplicate_articles_batch.return_value = {
+            "https://n.news.naver.com/article/023/0003123456": False,  # 대상 날짜 기사
+        }
 
         result = crawler.crawl_by_keywords(["충격"], target_date=target_date)
 
@@ -338,8 +345,8 @@ class TestNaverNewsCrawler:
         # check_duplicates=False로 호출 (dry-run 모드)
         result = crawler.crawl_by_keywords(["테스트"], check_duplicates=False)
 
-        # 중복 체크를 하지 않았으므로 check_duplicate_article이 호출되지 않아야 함
-        crawler.db_ops.check_duplicate_article.assert_not_called()
+        # 중복 체크를 하지 않았으므로 배치 중복 체크 메서드가 호출되지 않아야 함
+        crawler.db_ops.check_duplicate_articles_batch.assert_not_called()
 
         # 모든 기사가 포함되어야 함
         assert len(result) == 2
@@ -379,14 +386,17 @@ class TestNaverNewsCrawler:
 
         mock_parse_item.side_effect = [mock_article1, mock_article2]
 
-        # 첫 번째 기사는 중복이 아니고, 두 번째 기사는 중복으로 설정
-        crawler.db_ops.check_duplicate_article.side_effect = [False, True]
+        # 배치 중복 체크 설정: 첫 번째는 신규, 두 번째는 중복
+        crawler.db_ops.check_duplicate_articles_batch.return_value = {
+            "https://n.news.naver.com/article/023/0003123456": False,  # 첫 번째 기사: 신규
+            "https://n.news.naver.com/article/421/0007123456": True,  # 두 번째 기사: 중복
+        }
 
         # check_duplicates=True로 호출 (기본값)
         result = crawler.crawl_by_keywords(["테스트"], check_duplicates=True)
 
-        # 중복 체크가 2번 호출되어야 함
-        assert crawler.db_ops.check_duplicate_article.call_count == 2
+        # 배치 중복 체크가 한 번 호출되어야 함
+        assert crawler.db_ops.check_duplicate_articles_batch.call_count == 1
 
         # 중복이 아닌 첫 번째 기사만 포함되어야 함
         assert len(result) == 1

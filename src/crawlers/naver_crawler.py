@@ -385,7 +385,8 @@ class NaverNewsCrawler:
                     current_batch_articles = []
                     should_stop = False
 
-                    # 기사 파싱 및 날짜 필터링
+                    # 1단계: 기사 파싱 및 날짜 필터링
+                    parsed_articles = []
                     for item in items:
                         article = self.parse_api_item(item)
                         if not article:
@@ -408,18 +409,29 @@ class NaverNewsCrawler:
                             if article_date != target_date_only:
                                 continue
 
-                        # 중복 체크 (check_duplicates가 True일 때만)
-                        if check_duplicates:
-                            if not self.db_ops.check_duplicate_article(article.naver_url):
+                        parsed_articles.append(article)
+                        # Rate limiting
+                        time.sleep(0.1)
+
+                    # 2단계: 배치 중복 체크
+                    if check_duplicates and parsed_articles:
+                        # 모든 URL을 수집하여 한 번에 중복 체크
+                        naver_urls = [article.naver_url for article in parsed_articles]
+                        duplicate_status = self.db_ops.check_duplicate_articles_batch(naver_urls)
+
+                        # 중복이 아닌 기사들만 추가
+                        for article in parsed_articles:
+                            if not duplicate_status.get(article.naver_url, False):
                                 current_batch_articles.append(article)
                             else:
                                 logger.debug(f"중복 기사 스킵: {article.title[:50]}...")
-                        else:
-                            # 중복 체크 없이 모든 기사 추가
-                            current_batch_articles.append(article)
 
-                        # Rate limiting
-                        time.sleep(0.1)
+                        logger.info(
+                            f"배치 중복 체크 완료: {len(parsed_articles)}개 중 {len(current_batch_articles)}개 신규"
+                        )
+                    else:
+                        # 중복 체크 없이 모든 기사 추가
+                        current_batch_articles.extend(parsed_articles)
 
                     keyword_articles.extend(current_batch_articles)
 

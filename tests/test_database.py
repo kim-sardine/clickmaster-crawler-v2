@@ -243,6 +243,82 @@ class TestDatabaseOperations:
 
         assert result is False
 
+    def test_check_duplicate_articles_batch_mixed(self, mock_client):
+        """배치 중복 체크 테스트 - 일부 중복"""
+        # Mock 설정 - 기존 기사들
+        mock_table = Mock()
+        mock_select = Mock()
+        mock_in = Mock()
+
+        mock_client.table.return_value = mock_table
+        mock_table.select.return_value = mock_select
+        mock_select.in_.return_value = mock_in
+        mock_in.execute.return_value = Mock(
+            data=[
+                {"naver_url": "https://n.news.naver.com/article/023/0003123456"},
+                {"naver_url": "https://n.news.naver.com/article/421/0007123456"},
+            ]
+        )
+
+        db_ops = DatabaseOperations()
+        urls = [
+            "https://n.news.naver.com/article/023/0003123456",  # 중복
+            "https://n.news.naver.com/article/421/0007123456",  # 중복
+            "https://n.news.naver.com/article/999/0001234567",  # 신규
+        ]
+        result = db_ops.check_duplicate_articles_batch(urls)
+
+        expected = {
+            "https://n.news.naver.com/article/023/0003123456": True,  # 중복
+            "https://n.news.naver.com/article/421/0007123456": True,  # 중복
+            "https://n.news.naver.com/article/999/0001234567": False,  # 신규
+        }
+        assert result == expected
+
+    def test_check_duplicate_articles_batch_all_new(self, mock_client):
+        """배치 중복 체크 테스트 - 모두 신규"""
+        # Mock 설정 - 기존 기사 없음
+        mock_table = Mock()
+        mock_select = Mock()
+        mock_in = Mock()
+
+        mock_client.table.return_value = mock_table
+        mock_table.select.return_value = mock_select
+        mock_select.in_.return_value = mock_in
+        mock_in.execute.return_value = Mock(data=[])
+
+        db_ops = DatabaseOperations()
+        urls = [
+            "https://n.news.naver.com/article/023/0003123456",
+            "https://n.news.naver.com/article/421/0007123456",
+        ]
+        result = db_ops.check_duplicate_articles_batch(urls)
+
+        expected = {
+            "https://n.news.naver.com/article/023/0003123456": False,
+            "https://n.news.naver.com/article/421/0007123456": False,
+        }
+        assert result == expected
+
+    def test_check_duplicate_articles_batch_empty(self, mock_client):
+        """배치 중복 체크 테스트 - 빈 리스트"""
+        db_ops = DatabaseOperations()
+        result = db_ops.check_duplicate_articles_batch([])
+        assert result == {}
+
+    def test_check_duplicate_articles_batch_error(self, mock_client):
+        """배치 중복 체크 에러 테스트"""
+        # Mock 설정 - 에러 발생
+        mock_client.table.side_effect = Exception("Database error")
+
+        db_ops = DatabaseOperations()
+        urls = ["https://n.news.naver.com/article/023/0003123456"]
+        result = db_ops.check_duplicate_articles_batch(urls)
+
+        # 에러 시 모든 URL을 신규로 처리
+        expected = {"https://n.news.naver.com/article/023/0003123456": False}
+        assert result == expected
+
     def test_insert_article_success(self, mock_client):
         """기사 삽입 성공 테스트"""
         # get_or_create_journalist Mock
