@@ -75,6 +75,7 @@ def get_google_trends_keywords() -> List[str]:
 
             # 최대 20개의 키워드만 사용
             keywords = keywords[:MAX_KEYWORDS]
+            logger.info(f"Retrieved {len(keywords)} keywords from Google Trends")
 
             # 기본 키워드 추가하고 중복 제거
             keywords.extend(settings.DEFAULT_KEYWORDS)
