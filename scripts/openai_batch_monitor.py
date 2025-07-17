@@ -28,19 +28,6 @@ from src.utils.logging_utils import setup_logging, get_logger
 logger = get_logger(__name__)
 
 
-def setup_environment():
-    """환경 설정 및 검증"""
-    # settings.validate()를 사용하여 기본 설정 검증
-    if not settings.validate():
-        raise ValueError("기본 환경 변수가 설정되지 않았습니다. settings.validate() 실패")
-
-    # OpenAI API Key 추가 검증
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다")
-
-    logger.info("Environment setup completed")
-
-
 def initialize_components():
     """컴포넌트 초기화"""
     logger.info("Initializing components")
@@ -186,9 +173,6 @@ def run_batch_monitor(batch_size: int = 100) -> dict:
         # 로깅 설정
         setup_logging("INFO")
         logger.info("Starting OpenAI Batch Monitor")
-
-        # 환경 설정
-        setup_environment()
 
         # 컴포넌트 초기화
         batch_processor = initialize_components()
