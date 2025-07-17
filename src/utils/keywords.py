@@ -16,6 +16,9 @@ SERPAPI_TRENDS_URL = "https://serpapi.com/search"
 # 한국어와 영어 문자 패턴 (한글, 영문자, 숫자, 공백, 일반적인 기호만 허용)
 VALID_CHARS_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9\s\.\,\'\"\-\+\?\!\/\(\)\[\]\{\}\:\;\&\%\@\#\*\^\$\_\=\~\`\\]+$")
 
+# 사용할 최대 키워드 수
+MAX_KEYWORDS = 20
+
 
 @log_func
 def get_google_trends_keywords() -> List[str]:
@@ -65,11 +68,13 @@ def get_google_trends_keywords() -> List[str]:
                         keywords.append(query)
                     else:
                         logger.info(f"Filtered out keyword with non-Korean/English characters: {query}")
-
             if not keywords:
                 logger.error("No valid trending searches found from Google Trends")
                 logger.error("Process terminating due to empty keyword list")
                 raise SystemExit(1)
+
+            # 최대 20개의 키워드만 사용
+            keywords = keywords[:MAX_KEYWORDS]
 
             # 기본 키워드 추가하고 중복 제거
             keywords.extend(settings.DEFAULT_KEYWORDS)
