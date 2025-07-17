@@ -7,8 +7,10 @@ import requests
 import re
 from typing import List
 
-from src.utils.logging_utils import log_func, logger
+from src.utils.logging_utils import log_func, get_logger
 from src.config.settings import settings
+
+logger = get_logger(__name__)
 
 # SerpApi Google Trends API URL
 SERPAPI_TRENDS_URL = "https://serpapi.com/search"

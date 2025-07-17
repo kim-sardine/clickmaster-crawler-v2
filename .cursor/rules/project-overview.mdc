@@ -31,7 +31,7 @@ clickmaster-crawler/
 ```
 
 ## 🔧 핵심 기술 스택
-- **Python 3.9+** - 메인 개발 언어
+- **Python 3.12+** - 메인 개발 언어
 - **Supabase** - 메인 데이터베이스 (PostgreSQL)
 - **OpenAI API** - Batch API를 통한 Clickbait 점수 측정
 - **Naver Open API** - 뉴스 검색 API

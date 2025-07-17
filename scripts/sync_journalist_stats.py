@@ -14,20 +14,7 @@ import traceback
 
 from src.config.settings import settings
 from src.database.operations import DatabaseOperations
-
-
-def setup_logging(log_level: str = "INFO") -> logging.Logger:
-    """로깅 설정"""
-    # 로깅 설정
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
-
-    return logging.getLogger(__name__)
+from src.utils.logging_utils import setup_logging, get_logger
 
 
 def validate_environment() -> bool:
@@ -56,7 +43,7 @@ def run_stats_sync(fix_inconsistencies: bool = True, full_update: bool = False) 
     Returns:
         실행 결과 딕셔너리
     """
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     db_ops = DatabaseOperations()
 
     result = {"start_time": datetime.now().isoformat(), "success": False, "summary": {}, "actions": [], "errors": []}
@@ -148,7 +135,7 @@ def run_stats_sync(fix_inconsistencies: bool = True, full_update: bool = False) 
 
 def print_result_summary(result: dict):
     """실행 결과 요약 출력"""
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
 
     logger.info("\n" + "=" * 60)
     logger.info("📊 기자 통계 동기화 결과 요약")
@@ -231,7 +218,8 @@ def main():
     args = parser.parse_args()
 
     # 로깅 설정
-    logger = setup_logging(args.log_level)
+    setup_logging(args.log_level)
+    logger = get_logger(__name__)
 
     try:
         # 환경 변수 검증

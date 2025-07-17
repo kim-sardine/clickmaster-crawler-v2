@@ -1,15 +1,17 @@
 """
-Supabase 데이터베이스 연산
+데이터베이스 운영 모듈
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+import pytz
 
+from .supabase_client import get_supabase_client
 from src.models.article import Article, Journalist
-from src.database.supabase_client import get_supabase_client
+from src.utils.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DatabaseOperations:

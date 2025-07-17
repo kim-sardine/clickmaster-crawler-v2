@@ -1,22 +1,23 @@
 """
-네이버 뉴스 크롤러
+네이버 뉴스 크롤러 모듈
 """
 
-import requests
+import re
 import time
 import logging
-import html
-import re
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
-from urllib.parse import urljoin, urlparse, parse_qs
-from bs4 import BeautifulSoup
 import pytz
+import requests
+from bs4 import BeautifulSoup
+from dateutil import parser as date_parser
 
-from src.models.article import Article, NaverNewsCrawlerResult
+from src.config.settings import settings
+from src.models.article import Article, Journalist
 from src.database.operations import DatabaseOperations
+from src.utils.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class NaverNewsCrawler:
@@ -224,7 +225,7 @@ class NaverNewsCrawler:
 
         return text
 
-    def extract_article_content(self, naver_url: str) -> Optional[NaverNewsCrawlerResult]:
+    def extract_article_content(self, naver_url: str) -> Optional[Article]:
         """
         네이버 뉴스에서 제목, 기자명, 출판사명, 본문 추출
 
@@ -249,11 +250,13 @@ class NaverNewsCrawler:
                 logger.warning(f"Failed to extract essential content from {naver_url}")
                 return None
 
-            return NaverNewsCrawlerResult(
+            return Article(
                 title=title,
                 content=content,
-                reporter=reporter,
+                journalist_name=reporter,
                 publisher=publisher,
+                published_at=datetime.now(),  # Placeholder, actual date will be fetched from API
+                naver_url=naver_url,
             )
 
         except Exception as e:
@@ -272,8 +275,8 @@ class NaverNewsCrawler:
         """
         try:
             # HTML 엔티티 디코딩 후 태그 제거
-            api_title = BeautifulSoup(html.unescape(item["title"]), "html.parser").get_text()
-            description = BeautifulSoup(html.unescape(item["description"]), "html.parser").get_text()
+            api_title = BeautifulSoup(re.sub(r"&[^;]+;", "", item["title"]), "html.parser").get_text()
+            description = BeautifulSoup(re.sub(r"&[^;]+;", "", item["description"]), "html.parser").get_text()
 
             # 네이버 뉴스 URL인지 확인
             original_link = item["originallink"]
@@ -297,7 +300,7 @@ class NaverNewsCrawler:
                 # 크롤링된 데이터 우선 사용, 빈 값이면 API 데이터로 대체
                 title = crawl_result.title if crawl_result.title else api_title
                 content = crawl_result.content if crawl_result.content else description
-                journalist_name = crawl_result.reporter if crawl_result.reporter else "익명"
+                journalist_name = crawl_result.journalist_name if crawl_result.journalist_name else "익명"
                 publisher = crawl_result.publisher if crawl_result.publisher else "네이버뉴스"
 
             # 기자명 정규화 (빈 값이나 공백만 있는 경우 처리)
@@ -322,7 +325,7 @@ class NaverNewsCrawler:
 
             # 발행시간 파싱
             pub_date_str = item["pubDate"]
-            pub_date = datetime.strptime(pub_date_str, "%a, %d %b %Y %H:%M:%S %z")
+            pub_date = date_parser.parse(pub_date_str)
 
             # 한국 시간으로 변환
             kst = pytz.timezone("Asia/Seoul")

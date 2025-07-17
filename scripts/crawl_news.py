@@ -12,16 +12,11 @@ from dateutil.relativedelta import relativedelta
 from src.config.settings import settings
 from src.crawlers.naver_crawler import NaverNewsCrawler
 from src.utils.keywords import get_combined_keywords
+from src.utils.logging_utils import setup_logging, get_logger
 
-# 로깅 설정
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL),
-    format=settings.LOG_FORMAT,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
-)
-logger = logging.getLogger(__name__)
+# 통일된 로깅 설정
+setup_logging()
+logger = get_logger(__name__)
 
 
 def validate_date_format(date_string: str) -> datetime:

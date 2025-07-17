@@ -7,7 +7,7 @@ name = "clickmaster-crawler"
 version = "0.1.0"
 description = "네이버 뉴스 Clickbait 측정 크롤러"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "requests==2.32.4",
     "beautifulsoup4==4.13.4",
@@ -15,7 +15,8 @@ dependencies = [
     "python-dotenv==1.1.1",
     "lxml==6.0.0",
     "pytz==2025.2",
-    "python-dateutil==2.9.0"
+    "python-dateutil==2.9.0",
+    "openai==1.97.0"
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ dev = [
 
 [project.scripts]
 crawl-news = "scripts.crawl_news:main"
+openai-batch-monitor = "scripts.openai_batch_monitor:main"
 sync-journalist-stats = "scripts.sync_journalist_stats:main"
 
 [tool.setuptools.packages.find]

@@ -1,0 +1,236 @@
+---
+description: OpenAI Batch API Logic
+---
+
+# OpenAI Batch API를 통한 Clickbait 점수 측정 시스템
+
+## 🎯 개요
+네이버 뉴스 Article 데이터에 대해 OpenAI Batch API를 활용하여 clickbait 점수(0-100)와 판단 근거를 측정하는 시스템
+
+## 📋 스크립트 실행 순서
+
+### 1. 배치 상태 확인 단계
+- **목적**: 현재 실행중인 OpenAI batch 작업 존재 여부 확인
+- **구현**: 
+  - Supabase `batch` 테이블 조회
+  - `status = 'in_progress'` 조건으로 활성 배치 검색
+  - 배치 존재 여부에 따라 후처리/신규생성 분기
+
+### 2. 배치 후처리 로직 (실행중인 배치가 존재하는 경우)
+
+#### 2-1. 배치 결과 파일 다운로드
+```python
+# OpenAI Python API 활용
+client = OpenAI(api_key=openai_api_key)
+batch = client.batches.retrieve(batch_id)
+if batch.status == 'completed':
+    result_file = client.files.content(batch.output_file_id)
+```
+
+#### 2-2. 결과 파싱 및 데이터 추출
+- **입력**: OpenAI Batch API 결과 JSONL 파일
+- **출력**: Article별 `clickbait_score`, `clickbait_explanation` 매핑
+- **구현 고려사항**:
+  - JSONL 파일 라인별 파싱
+  - custom_id를 통한 Article ID 매핑
+  - OpenAI 응답에서 JSON 파싱 (clickbait_score, clickbait_explanation 추출)
+  - 파싱 실패 케이스 에러 핸들링
+
+#### 2-3. Supabase Article 테이블 Bulk 업데이트
+```python
+# Bulk upsert를 위한 데이터 준비
+bulk_updates = []
+for article_id, result in parsed_results.items():
+    bulk_updates.append({
+        'id': article_id,
+        'clickbait_score': result['clickbait_score'],
+        'clickbait_explanation': result['clickbait_explanation'],
+        'updated_at': datetime.now().isoformat()
+    })
+
+# 한번에 모든 데이터 업데이트 (성능상 훨씬 효율적)
+if bulk_updates:
+    response = supabase.table('Article').upsert(bulk_updates).execute()
+    logger.info(f"Bulk updated {len(bulk_updates)} articles")
+```
+
+#### 2-4. 배치 상태 업데이트 및 신규 배치 생성으로 이동
+- `batch` 테이블의 해당 배치 상태를 `completed`로 업데이트
+- 처리된 Article 수 기록
+- 신규 배치 생성 단계로 이동
+
+### 3. 신규 배치 생성 로직 (실행중인 배치가 없는 경우)
+
+#### 3-1. 대상 Article 데이터 조회
+```python
+# clickbait_score가 null인 데이터 800개 조회 (오래된 순)
+articles = supabase.table('Article').select('*')\
+    .is_('clickbait_score', 'null')\
+    .order('created_at', desc=False)\
+    .limit(800)\
+    .execute()
+```
+
+#### 3-2. 프롬프트 생성 및 Batch API 입력 포맷 변환
+```python
+# 각 Article별 프롬프트 생성
+batch_requests = []
+for article in articles:
+    prompt = generate_clickbait_prompt(article)
+    batch_request = {
+        "custom_id": f"article_{article['id']}",
+        "method": "POST",
+        "url": "/v1/chat/completions",
+        "body": {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 500,
+            "response_format": {"type": "json_object"}
+        }
+    }
+    batch_requests.append(batch_request)
+```
+
+#### 3-3. OpenAI Batch API 생성 호출
+```python
+# JSONL 파일 생성 및 업로드
+batch_file = client.files.create(
+    file=batch_requests_jsonl,
+    purpose="batch"
+)
+
+# 배치 생성
+batch = client.batches.create(
+    input_file_id=batch_file.id,
+    endpoint="/v1/chat/completions",
+    completion_window="24h"
+)
+
+# Supabase batch 테이블에 배치 정보 저장
+supabase.table('batch').insert({
+    'batch_id': batch.id,
+    'status': 'in_progress',
+    'article_count': len(articles),
+    'created_at': datetime.now().isoformat()
+}).execute()
+```
+
+## 🔧 구현 파일 구조
+
+### 스크립트 파일
+- `scripts/process_clickbait_batch.py`: 메인 실행 스크립트
+
+### 핵심 모듈
+- `src/core/batch_processor.py`: 배치 처리 핵심 로직
+- `src/core/openai_client.py`: OpenAI API 클라이언트 래퍼
+- `src/core/prompt_generator.py`: Clickbait 판단 프롬프트 생성
+- `src/core/bulk_updater.py`: Bulk upsert 최적화 및 에러 핸들링
+
+### 설정 파일
+- `src/config/prompts.py`: Clickbait 판단 프롬프트 템플릿
+- `src/config/batch_settings.py`: 배치 처리 관련 설정
+
+### 유틸리티 모듈
+- `src/utils/batch_utils.py`: 배치 분할, 재시도 로직
+- `src/utils/performance_monitor.py`: 성능 모니터링 및 메트릭
+
+## 📊 데이터베이스 스키마 참고
+
+### batch 테이블 (신규 생성 필요)
+```sql
+CREATE TABLE batch (
+    id SERIAL PRIMARY KEY,
+    batch_id VARCHAR(255) UNIQUE NOT NULL,
+    status VARCHAR(50) NOT NULL, -- 'in_progress', 'completed', 'failed'
+    article_count INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    error_message TEXT
+);
+```
+
+## ⚙️ 환경 설정
+
+### 환경 변수
+- `OPENAI_API_KEY`: OpenAI API 키
+- `SUPABASE_URL`: Supabase 프로젝트 URL  
+- `SUPABASE_SERVICE_ROLE_KEY`: Supabase 서비스 키
+
+### GitHub Actions 스케줄링
+- **실행 주기**: 매시간 정각 (0분)
+- **Cron 표현식**: `0 * * * *`
+- **타임아웃**: 30분
+
+## ⚡ 성능 최적화
+
+### Bulk Upsert 장점
+- **성능 향상**: 개별 업데이트 대신 한번의 요청으로 처리 (최대 800개까지)
+- **네트워크 효율성**: API 요청 횟수 대폭 감소 (800회 → 1회)
+- **트랜잭션 보장**: 모든 업데이트가 하나의 트랜잭션으로 처리
+
+### Bulk Upsert 사용법
+```python
+# upsert는 id를 기준으로 존재하면 UPDATE, 없으면 INSERT
+bulk_updates = [
+    {'id': 1, 'clickbait_score': 85, 'clickbait_explanation': '...'},
+    {'id': 2, 'clickbait_score': 42, 'clickbait_explanation': '...'}
+]
+response = supabase.table('Article').upsert(bulk_updates).execute()
+```
+
+### 배치 크기 고려사항
+- **권장 배치 크기**: 500-1000개 (Supabase 제한에 따라 조정)
+- **메모리 사용량**: 큰 배치일수록 메모리 사용량 증가
+- **실패 시 재시도**: 일부 실패 시 실패한 항목만 재시도
+
+## 🛡️ 에러 핸들링
+
+### 배치 처리 실패 시
+- `batch` 테이블 상태를 `failed`로 업데이트
+- 에러 메시지 기록
+- 슬랙/이메일 알림 발송
+
+### 개별 Article 파싱 실패 시  
+- 파싱 실패한 Article은 bulk_updates에서 제외
+- 실패한 Article ID와 에러 내용 로그 기록
+- 다음 배치에서 재시도 (clickbait_score가 여전히 null이므로)
+
+### Bulk Upsert 실패 시
+- 네트워크 오류나 DB 제약 조건 위반 시 전체 배치 실패
+- 실패 시 개별 upsert로 fallback 처리 옵션
+- 배치를 더 작은 단위로 분할하여 재시도
+
+### OpenAI API 한도 초과 시
+- 배치 생성 실패 시 다음 시간에 재시도
+- Rate limit 에러 처리
+
+## 📝 로깅 전략
+
+### 로그 레벨별 기록 사항
+- **INFO**: 배치 생성/완료, 처리된 Article 수
+- **WARNING**: 개별 파싱 실패, API 응답 이상
+- **ERROR**: 배치 처리 실패, DB 연결 실패
+- **DEBUG**: 상세 처리 과정, API 요청/응답
+
+### 로그 파일 구조
+```
+logs/
+├── batch_processing.log      # 메인 로그
+├── openai_api.log           # OpenAI API 관련 로그  
+└── error.log                # 에러만 별도 기록
+```
+
+## 🧪 테스트 전략
+
+### 단위 테스트
+- 프롬프트 생성 로직 테스트
+- 배치 결과 파싱 로직 테스트
+- Database 연산 테스트
+
+### 통합 테스트  
+- 전체 배치 처리 플로우 테스트
+- OpenAI API Mock을 활용한 End-to-End 테스트
+
+### 성능 테스트
+- 800개 Article 배치 처리 시간 측정
+- 메모리 사용량 모니터링
