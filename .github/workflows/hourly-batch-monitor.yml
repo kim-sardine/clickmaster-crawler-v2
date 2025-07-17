@@ -2,8 +2,8 @@ name: Hourly OpenAI Batch Monitor
 
 on:
   schedule:
-    # 매시간 정각에 실행 (UTC 기준)
-    - cron: '0 * * * *'
+    # 매시간 27분에 실행 (UTC 기준) - 부하 분산을 위해 정각 피함
+    - cron: '27 * * * *'
   workflow_dispatch:  # 수동 실행 가능
     inputs:
       batch_size:
