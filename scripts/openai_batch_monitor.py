@@ -66,7 +66,7 @@ def initialize_components():
     return batch_processor
 
 
-def process_active_batch(batch_processor: BatchProcessor, active_batch: dict) -> bool:
+def process_active_batch(batch_processor: BatchProcessor, active_batch: dict) -> str:
     """
     활성 배치 후처리
 
@@ -75,7 +75,7 @@ def process_active_batch(batch_processor: BatchProcessor, active_batch: dict) ->
         active_batch: 활성 배치 정보
 
     Returns:
-        처리 성공 여부
+        배치 상태: "completed", "in_progress", "failed", "cancelled"
     """
     batch_id = active_batch["batch_id"]
     logger.info(f"Processing active batch: {batch_id}")
@@ -86,7 +86,7 @@ def process_active_batch(batch_processor: BatchProcessor, active_batch: dict) ->
 
         if not batch_status:
             logger.error("Failed to check batch status")
-            return False
+            return "failed"
 
         if batch_status == "completed":
             logger.info("Batch completed, processing results")
@@ -98,34 +98,34 @@ def process_active_batch(batch_processor: BatchProcessor, active_batch: dict) ->
                 # 배치 상태를 완료로 업데이트
                 batch_processor.update_batch_status(batch_id, "completed")
                 logger.info("Batch processing completed successfully")
-                return True
+                return "completed"
             else:
                 # 배치 상태를 실패로 업데이트
                 batch_processor.update_batch_status(batch_id, "failed", "Failed to process batch results")
                 logger.error("Failed to process batch results")
-                return False
+                return "failed"
 
         elif batch_status == "failed":
             logger.warning("Batch failed on OpenAI side")
             batch_processor.update_batch_status(batch_id, "failed", "Batch failed on OpenAI platform")
-            return False
+            return "failed"
 
         elif batch_status == "cancelled":
             logger.warning("Batch was cancelled")
             batch_processor.update_batch_status(batch_id, "cancelled")
-            return False
+            return "cancelled"
 
         else:
             logger.info(f"Batch still in progress (status: {batch_status})")
-            return False
+            return "in_progress"
 
     except Exception as e:
         logger.error(f"Error processing active batch: {e}")
         batch_processor.update_batch_status(batch_id, "failed", f"Processing error: {str(e)}")
-        return False
+        return "failed"
 
 
-def create_new_batch(batch_processor: BatchProcessor, batch_size: int = 20) -> bool:
+def create_new_batch(batch_processor: BatchProcessor, batch_size: int = 100) -> bool:
     """
     신규 배치 생성
 
@@ -170,7 +170,7 @@ def create_new_batch(batch_processor: BatchProcessor, batch_size: int = 20) -> b
         return False
 
 
-def run_batch_monitor(batch_size: int = 20) -> dict:
+def run_batch_monitor(batch_size: int = 100) -> dict:
     """
     배치 모니터링 실행
 
@@ -180,7 +180,7 @@ def run_batch_monitor(batch_size: int = 20) -> dict:
     Returns:
         실행 결과 딕셔너리
     """
-    result = {"success": False, "active_batch_processed": False, "new_batch_created": False, "errors": []}
+    result = {"success": False, "active_batch_status": None, "new_batch_created": False, "errors": [], "message": ""}
 
     try:
         # 로깅 설정
@@ -199,16 +199,28 @@ def run_batch_monitor(batch_size: int = 20) -> dict:
         if active_batch:
             # 2. 활성 배치 후처리
             logger.info("Found active batch, processing results")
-            success = process_active_batch(batch_processor, active_batch)
-            result["active_batch_processed"] = success
+            batch_status = process_active_batch(batch_processor, active_batch)
+            result["active_batch_status"] = batch_status
 
-            if not success:
-                result["errors"].append("Failed to process active batch")
+            if batch_status == "completed":
+                logger.info("Active batch completed, proceeding to create new batch")
+                result["message"] = "Active batch completed successfully"
+            elif batch_status == "in_progress":
+                logger.info("Active batch still in progress, skipping new batch creation")
+                result["message"] = "Active batch is still running - waiting for completion"
+                result["success"] = True
+                return result
+            elif batch_status in ["failed", "cancelled"]:
+                logger.warning(f"Active batch {batch_status}, proceeding to create new batch")
+                result["message"] = f"Active batch {batch_status}, creating new batch"
+            else:
+                result["errors"].append(f"Unknown batch status: {batch_status}")
                 return result
         else:
             logger.info("No active batch found")
+            result["message"] = "No active batch found"
 
-        # 3. 신규 배치 생성
+        # 3. 신규 배치 생성 (활성 배치가 완료되었거나 없는 경우만)
         logger.info("Creating new batch")
         success = create_new_batch(batch_processor, batch_size)
         result["new_batch_created"] = success
@@ -216,6 +228,10 @@ def run_batch_monitor(batch_size: int = 20) -> dict:
         if success:
             logger.info("Batch monitoring completed successfully")
             result["success"] = True
+            if result["message"]:
+                result["message"] += " and new batch created"
+            else:
+                result["message"] = "New batch created successfully"
         else:
             result["errors"].append("Failed to create new batch")
 
@@ -255,6 +271,15 @@ def main():
     # 결과 출력
     if result["success"]:
         print("✅ 배치 모니터링이 성공적으로 완료되었습니다.")
+        if result["message"]:
+            print(f"📋 상태: {result['message']}")
+
+        # 상세 정보 출력
+        if result["active_batch_status"]:
+            print(f"📊 활성 배치 상태: {result['active_batch_status']}")
+        if result["new_batch_created"]:
+            print("🆕 새로운 배치가 생성되었습니다.")
+
         sys.exit(0)
     else:
         print("❌ 배치 모니터링 중 오류가 발생했습니다:")
