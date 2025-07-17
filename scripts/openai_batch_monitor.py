@@ -170,13 +170,12 @@ def create_new_batch(batch_processor: BatchProcessor, batch_size: int = 20) -> b
         return False
 
 
-def run_batch_monitor(batch_size: int = 20, log_level: str = "INFO") -> dict:
+def run_batch_monitor(batch_size: int = 20) -> dict:
     """
     배치 모니터링 실행
 
     Args:
         batch_size: 배치 크기
-        log_level: 로깅 레벨
 
     Returns:
         실행 결과 딕셔너리
@@ -185,7 +184,7 @@ def run_batch_monitor(batch_size: int = 20, log_level: str = "INFO") -> dict:
 
     try:
         # 로깅 설정
-        setup_logging(log_level)
+        setup_logging("INFO")
         logger.info("Starting OpenAI Batch Monitor")
 
         # 환경 설정
@@ -238,15 +237,10 @@ def main():
 실행 예시:
   %(prog)s                          # 기본 설정으로 실행
   %(prog)s --batch-size 50          # 배치 크기 50으로 실행
-  %(prog)s --log-level DEBUG        # 디버그 로그 활성화
         """,
     )
 
-    parser.add_argument("--batch-size", type=int, default=100, help="배치 크기 (기본값: 20, 최대 800)")
-
-    parser.add_argument(
-        "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO", help="로깅 레벨 (기본값: INFO)"
-    )
+    parser.add_argument("--batch-size", type=int, default=100, help="배치 크기 (기본값: 100, 최대 800)")
 
     args = parser.parse_args()
 
@@ -256,7 +250,7 @@ def main():
         sys.exit(1)
 
     # 배치 모니터링 실행
-    result = run_batch_monitor(batch_size=args.batch_size, log_level=args.log_level)
+    result = run_batch_monitor(batch_size=args.batch_size)
 
     # 결과 출력
     if result["success"]:

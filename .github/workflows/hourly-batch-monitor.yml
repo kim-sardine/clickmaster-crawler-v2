@@ -1,0 +1,90 @@
+name: Hourly OpenAI Batch Monitor
+
+on:
+  schedule:
+    # 매시간 정각에 실행 (UTC 기준)
+    - cron: '0 * * * *'
+  workflow_dispatch:  # 수동 실행 가능
+    inputs:
+      batch_size:
+        description: '배치 크기 (1-800)'
+        required: false
+        type: number
+
+jobs:
+  monitor-batch:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30  # 30분 타임아웃
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Set batch parameters
+      id: params
+      run: |
+        # 배치 크기 설정 (수동 실행 시 입력값, 자동 실행 시 기본값 100)
+        if [ -n "${{ github.event.inputs.batch_size }}" ]; then
+          BATCH_SIZE="${{ github.event.inputs.batch_size }}"
+        else
+          BATCH_SIZE="800"
+        fi
+        
+        echo "batch_size=${BATCH_SIZE}" >> $GITHUB_OUTPUT
+        echo "Batch size: ${BATCH_SIZE}"
+        
+    - name: Run OpenAI Batch Monitor
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        # 기본 명령어 구성
+        CMD="python -m scripts.openai_batch_monitor"
+        CMD="${CMD} --batch-size ${{ steps.params.outputs.batch_size }}"
+        
+        echo "🚀 Executing: ${CMD}"
+        echo "📅 Current time (UTC): $(date -u)"
+        echo "📅 Current time (KST): $(TZ=Asia/Seoul date)"
+        
+        # 스크립트 실행
+        ${CMD}
+        
+    - name: Check execution result
+      if: always()
+      run: |
+        if [ $? -eq 0 ]; then
+          echo "✅ OpenAI Batch Monitor completed successfully"
+        else
+          echo "❌ OpenAI Batch Monitor failed with exit code $?"
+          exit 1
+        fi
+        
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: batch-monitor-logs-${{ github.run_number }}
+        path: |
+          logs/
+          *.log
+        retention-days: 7 
