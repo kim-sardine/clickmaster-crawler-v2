@@ -68,23 +68,3 @@ jobs:
         
         # 스크립트 실행
         ${CMD}
-        
-    - name: Check execution result
-      if: always()
-      run: |
-        if [ $? -eq 0 ]; then
-          echo "✅ OpenAI Batch Monitor completed successfully"
-        else
-          echo "❌ OpenAI Batch Monitor failed with exit code $?"
-          exit 1
-        fi
-        
-    - name: Upload logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v3
-      with:
-        name: batch-monitor-logs-${{ github.run_number }}
-        path: |
-          logs/
-          *.log
-        retention-days: 7 
