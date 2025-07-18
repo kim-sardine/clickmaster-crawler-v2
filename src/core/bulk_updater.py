@@ -159,6 +159,7 @@ class BulkUpdater:
         logger.warning("Falling back to individual updates")
 
         success_count = 0
+        current_time = datetime.now().isoformat()
 
         for update in batch:
             try:
@@ -174,7 +175,7 @@ class BulkUpdater:
                         {
                             "clickbait_score": update.get("clickbait_score"),
                             "clickbait_explanation": update.get("clickbait_explanation"),
-                            "updated_at": update.get("updated_at"),
+                            "updated_at": current_time,
                         }
                     )
                     .eq("id", article_id)

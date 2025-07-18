@@ -65,11 +65,77 @@ class BatchProcessor:
                 return active_batch
             else:
                 logger.info("No active batch found")
+
+                # 🔍 고아 배치 감지 (OpenAI에는 있지만 DB에는 없는 배치)
+                self._detect_and_recover_orphan_batches()
+
                 return None
 
         except Exception as e:
             logger.error(f"Failed to check active batch: {e}")
             return None
+
+    def _detect_and_recover_orphan_batches(self):
+        """
+        고아 배치 감지 및 복구 시도
+        """
+        logger.info("🔍 Checking for orphan batches (OpenAI batches not recorded in database)")
+
+        try:
+            # TODO: OpenAI API에서 내 계정의 모든 배치 목록을 조회하는 기능이 있다면 구현
+            # 현재는 로깅만 수행
+            logger.info("Orphan batch detection: Feature planned for future implementation")
+            logger.info("If you suspect orphan batches exist, check OpenAI dashboard manually")
+
+        except Exception as e:
+            logger.warning(f"Failed to detect orphan batches: {e}")
+
+    def recover_orphan_batch(self, batch_id: str, article_count: int) -> bool:
+        """
+        고아 배치 복구 (OpenAI에는 있지만 DB에는 없는 배치를 DB에 등록)
+
+        Args:
+            batch_id: OpenAI 배치 ID
+            article_count: 예상 Article 수
+
+        Returns:
+            복구 성공 여부
+        """
+        logger.info(f"Attempting to recover orphan batch: {batch_id}")
+
+        try:
+            # 1. OpenAI에서 배치 상태 확인
+            openai_status = self.check_batch_completion(batch_id)
+
+            if not openai_status:
+                logger.error(f"Cannot recover orphan batch: OpenAI batch {batch_id} not found")
+                return False
+
+            logger.info(f"Found OpenAI batch {batch_id} with status: {openai_status}")
+
+            # 2. DB에 배치 정보 복구
+            batch_data = {
+                "batch_id": batch_id,
+                "status": "in_progress" if openai_status == "in_progress" else openai_status,
+                "article_count": article_count,
+                "created_at": datetime.now().isoformat(),
+                "recovered": True,  # 복구된 배치임을 표시
+            }
+
+            response = self.supabase.client.table("batch").insert(batch_data).execute()
+
+            if response.data:
+                logger.info(f"✅ Successfully recovered orphan batch: {batch_id}")
+                logger.info(f"  Status: {openai_status}")
+                logger.info(f"  Article count: {article_count}")
+                return True
+            else:
+                logger.error(f"Failed to recover orphan batch: No data returned")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to recover orphan batch {batch_id}: {e}")
+            return False
 
     def get_all_active_batches(self) -> List[Dict[str, Any]]:
         """
@@ -133,7 +199,7 @@ class BatchProcessor:
 
     def create_batch_request(self, articles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
-        배치 요청 생성
+        배치 요청 생성 (동시성 제어 포함)
 
         Args:
             articles: Article 데이터 리스트
@@ -146,6 +212,11 @@ class BatchProcessor:
             return None
 
         logger.info(f"Creating batch request for {len(articles)} articles")
+
+        # 🔒 배치 생성 전 사전 동시성 체크 (Race Condition 방지)
+        if not self._pre_check_batch_creation():
+            logger.warning("Pre-check failed: Another batch is already in progress")
+            return None
 
         try:
             # 배치 요청 생성
@@ -171,6 +242,38 @@ class BatchProcessor:
         except Exception as e:
             logger.error(f"Failed to create batch request: {e}")
             return None
+
+    def _pre_check_batch_creation(self) -> bool:
+        """
+        배치 생성 전 사전 체크 (동시성 제어)
+
+        Returns:
+            배치 생성 가능 여부
+        """
+        logger.info("Performing pre-check for batch creation")
+
+        try:
+            # 현재 활성 배치 확인
+            active_check = (
+                self.supabase.client.table("batch")
+                .select("id, batch_id, status, created_at")
+                .eq("status", "in_progress")
+                .execute()
+            )
+
+            if active_check.data:
+                active_batch = active_check.data[0]
+                logger.warning(f"Pre-check failed: Active batch exists - {active_batch['batch_id']}")
+                logger.warning(f"  Created at: {active_batch.get('created_at', 'unknown')}")
+                logger.warning(f"  Status: {active_batch['status']}")
+                return False
+
+            logger.info("Pre-check passed: No active batches found")
+            return True
+
+        except Exception as e:
+            logger.error(f"Pre-check failed due to error: {e}")
+            return False
 
     def process_batch_results(self, batch_id: str) -> bool:
         """
@@ -323,7 +426,7 @@ class BatchProcessor:
 
     def save_batch_info_to_database(self, batch_info: Dict[str, Any], article_count: int) -> Optional[Dict[str, Any]]:
         """
-        배치 정보를 데이터베이스에 저장 (원자적 처리로 중복 방지)
+        배치 정보를 데이터베이스에 저장 (강화된 원자적 처리로 중복 방지)
 
         Args:
             batch_info: 배치 정보
@@ -333,20 +436,24 @@ class BatchProcessor:
             저장된 데이터 또는 None
         """
         batch_id = batch_info["id"]
-        logger.info(f"Saving batch info to database: {batch_id}")
+        logger.info(f"🔒 Saving batch info to database with enhanced concurrency control: {batch_id}")
 
         try:
             # 1단계: 이미 존재하는 배치인지 확인 (중복 방지)
+            logger.info("Step 1: Checking for existing batch")
             existing_check = (
                 self.supabase.client.table("batch").select("id, batch_id, status").eq("batch_id", batch_id).execute()
             )
 
             if existing_check.data:
                 existing_batch = existing_check.data[0]
-                logger.warning(f"Batch already exists: {batch_id} (status: {existing_batch['status']})")
+                logger.warning(f"❌ Batch already exists in database: {batch_id}")
+                logger.warning(f"  Existing batch status: {existing_batch['status']}")
+                logger.warning(f"  Database ID: {existing_batch['id']}")
                 return existing_batch
 
             # 2단계: 다른 in_progress 배치 존재 여부 확인 (동시성 제어)
+            logger.info("Step 2: Checking for concurrent in_progress batches")
             active_check = (
                 self.supabase.client.table("batch")
                 .select("id, batch_id, status, created_at")
@@ -355,46 +462,69 @@ class BatchProcessor:
             )
 
             if active_check.data:
-                logger.warning(f"Another batch is already in progress: {active_check.data[0]['batch_id']}")
-                logger.warning("Skipping batch creation to prevent concurrent processing")
+                concurrent_batch = active_check.data[0]
+                logger.warning(f"❌ Concurrent batch creation prevented!")
+                logger.warning(f"  Another batch is already in progress: {concurrent_batch['batch_id']}")
+                logger.warning(f"  Concurrent batch created: {concurrent_batch.get('created_at', 'unknown')}")
+                logger.warning(f"  Current batch to save: {batch_id}")
+                logger.warning("🛡️ Skipping batch creation to prevent concurrent processing")
+
+                # OpenAI 배치는 생성되었지만 DB 저장 불가 - 중요한 상황
+                logger.error(f"⚠️ CRITICAL: OpenAI batch {batch_id} was created but cannot be saved due to concurrency")
+                logger.error("This may require manual intervention to clean up the orphan batch")
+
                 return None
 
             # 3단계: 배치 정보 삽입 (원자적 처리)
+            logger.info("Step 3: Inserting new batch into database")
             batch_data = {
                 "batch_id": batch_id,
                 "status": "in_progress",
                 "article_count": article_count,
                 "created_at": batch_info.get("created_at", datetime.now().isoformat()),
+                "openai_status": batch_info.get("status", "unknown"),  # OpenAI 상태도 기록
             }
 
+            logger.info(f"  Batch data to insert: {batch_data}")
             response = self.supabase.client.table("batch").insert(batch_data).execute()
 
             if response.data:
-                logger.info(f"Batch info saved successfully with concurrency control")
-                return response.data[0]
+                saved_batch = response.data[0]
+                logger.info(f"✅ Batch info saved successfully with enhanced concurrency control")
+                logger.info(f"  Database ID: {saved_batch['id']}")
+                logger.info(f"  Batch ID: {saved_batch['batch_id']}")
+                logger.info(f"  Status: {saved_batch['status']}")
+                logger.info(f"  Article count: {saved_batch['article_count']}")
+                return saved_batch
             else:
-                logger.error("Failed to save batch info - no data returned")
+                logger.error("❌ Failed to save batch info - no data returned from database")
                 return None
 
         except Exception as e:
             error_msg = str(e)
+            logger.error(f"💥 Database operation failed while saving batch {batch_id}: {e}")
 
             # 동시성 위반 에러 처리 (unique constraint violation)
             if "23505" in error_msg or "duplicate key value" in error_msg:
-                logger.warning(f"Batch {batch_id} was already created by another instance")
+                logger.warning(f"🔄 Duplicate batch detected: {batch_id} was already created by another instance")
+                logger.warning("This indicates a race condition was caught by database constraints")
 
                 # 이미 생성된 배치 정보 조회
                 try:
                     existing = self.supabase.client.table("batch").select("*").eq("batch_id", batch_id).execute()
 
                     if existing.data:
-                        logger.info("Returning existing batch info created by concurrent instance")
+                        logger.info("🔍 Found existing batch created by concurrent instance")
+                        logger.info(f"  Status: {existing.data[0]['status']}")
+                        logger.info(f"  Created: {existing.data[0].get('created_at', 'unknown')}")
                         return existing.data[0]
 
                 except Exception as lookup_error:
-                    logger.error(f"Failed to lookup existing batch: {lookup_error}")
+                    logger.error(f"❌ Failed to lookup existing batch after duplicate error: {lookup_error}")
 
-            logger.error(f"Failed to save batch info: {e}")
+            # 기타 데이터베이스 에러
+            logger.error(f"❌ Critical error saving batch {batch_id}: {e}")
+            logger.error("This may require manual intervention to resolve")
             return None
 
     def update_batch_status(
@@ -431,10 +561,9 @@ class BatchProcessor:
                 logger.warning(f"Invalid status transition for batch {batch_id}: {current_status} -> {status}")
                 return None
 
-            # 2단계: 상태 업데이트 실행
+            # 2단계: 상태 업데이트 실행 (updated_at 컬럼 제거됨)
             update_data = {
                 "status": status,
-                "updated_at": datetime.now().isoformat(),
             }
 
             # 완료 관련 상태인 경우 완료 시간 기록
