@@ -35,7 +35,7 @@ class BatchProcessor:
 
     def check_active_batch(self) -> Optional[Dict[str, Any]]:
         """
-        현재 실행 중인 배치 확인
+        현재 실행 중인 배치 확인 (생성 시간 기준 가장 오래된 것)
 
         Returns:
             활성 배치 정보 또는 None
@@ -43,11 +43,25 @@ class BatchProcessor:
         logger.info("Checking for active batches")
 
         try:
-            response = self.supabase.client.table("batch").select("*").eq("status", "in_progress").execute()
+            response = (
+                self.supabase.client.table("batch")
+                .select("*")
+                .eq("status", "in_progress")
+                .order("created_at", desc=False)  # 가장 오래된 것부터
+                .execute()
+            )
 
             if response.data:
+                # 여러 배치가 있는 경우 경고 로그
+                if len(response.data) > 1:
+                    logger.warning(f"Found {len(response.data)} active batches! Processing oldest first.")
+                    for i, batch in enumerate(response.data):
+                        logger.warning(
+                            f"  Batch {i + 1}: {batch['batch_id']} (created: {batch.get('created_at', 'unknown')})"
+                        )
+
                 active_batch = response.data[0]
-                logger.info(f"Found active batch: {active_batch['batch_id']}")
+                logger.info(f"Processing active batch: {active_batch['batch_id']}")
                 return active_batch
             else:
                 logger.info("No active batch found")
@@ -56,6 +70,36 @@ class BatchProcessor:
         except Exception as e:
             logger.error(f"Failed to check active batch: {e}")
             return None
+
+    def get_all_active_batches(self) -> List[Dict[str, Any]]:
+        """
+        모든 활성 배치 조회 (모니터링/디버깅용)
+
+        Returns:
+            활성 배치 리스트
+        """
+        logger.info("Retrieving all active batches")
+
+        try:
+            response = (
+                self.supabase.client.table("batch")
+                .select("*")
+                .eq("status", "in_progress")
+                .order("created_at", desc=False)
+                .execute()
+            )
+
+            batches = response.data
+            logger.info(f"Found {len(batches)} active batches")
+
+            for i, batch in enumerate(batches):
+                logger.info(f"  Batch {i + 1}: {batch['batch_id']} (created: {batch.get('created_at', 'unknown')})")
+
+            return batches
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve active batches: {e}")
+            return []
 
     def get_pending_articles(self, limit: int = 800) -> List[Dict[str, Any]]:
         """
@@ -211,16 +255,13 @@ class BatchProcessor:
                 validated_data = self.prompt_generator.validate_clickbait_response(message_content)
 
                 if validated_data:
-                    try:
-                        article_id_int = int(article_id)
-                        update = {
-                            "id": article_id_int,
-                            "clickbait_score": validated_data["clickbait_score"],
-                            "clickbait_explanation": validated_data["clickbait_explanation"],
-                        }
-                        updates.append(update)
-                    except ValueError as e:
-                        logger.error(f"Invalid article ID {article_id}: {e}")
+                    # UUID는 문자열 형태로 사용
+                    update = {
+                        "id": article_id,
+                        "clickbait_score": validated_data["clickbait_score"],
+                        "clickbait_explanation": validated_data["clickbait_explanation"],
+                    }
+                    updates.append(update)
                 else:
                     logger.warning(f"Invalid response data for article {article_id}")
 

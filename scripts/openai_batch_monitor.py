@@ -177,34 +177,57 @@ def run_batch_monitor(batch_size: int = 100) -> dict:
         # 컴포넌트 초기화
         batch_processor = initialize_components()
 
-        # 1. 활성 배치 확인
-        active_batch = batch_processor.check_active_batch()
+        # 1. 모든 활성 배치 확인 및 처리
+        all_active_batches = batch_processor.get_all_active_batches()
 
-        if active_batch:
-            # 2. 활성 배치 후처리
-            logger.info("Found active batch, processing results")
-            batch_status = process_active_batch(batch_processor, active_batch)
-            result["active_batch_status"] = batch_status
+        if all_active_batches:
+            logger.info(f"Found {len(all_active_batches)} active batches - processing all sequentially")
 
-            if batch_status == "completed":
-                logger.info("Active batch completed, proceeding to create new batch")
-                result["message"] = "Active batch completed successfully"
-            elif batch_status == "in_progress":
-                logger.info("Active batch still in progress, skipping new batch creation")
-                result["message"] = "Active batch is still running - waiting for completion"
+            completed_batches = 0
+            failed_batches = 0
+            in_progress_batches = 0
+
+            # 모든 활성 배치를 순차적으로 처리
+            for i, active_batch in enumerate(all_active_batches, 1):
+                logger.info(f"Processing batch {i}/{len(all_active_batches)}: {active_batch['batch_id']}")
+
+                batch_status = process_active_batch(batch_processor, active_batch)
+
+                if batch_status == "completed":
+                    completed_batches += 1
+                elif batch_status == "in_progress":
+                    in_progress_batches += 1
+                elif batch_status in ["failed", "cancelled"]:
+                    failed_batches += 1
+
+                logger.info(f"Batch {i} status: {batch_status}")
+
+            # 결과 요약
+            result["active_batch_status"] = {
+                "total_processed": len(all_active_batches),
+                "completed": completed_batches,
+                "in_progress": in_progress_batches,
+                "failed": failed_batches,
+            }
+
+            if in_progress_batches > 0:
+                logger.info(f"Still have {in_progress_batches} batches in progress - skipping new batch creation")
+                result["message"] = (
+                    f"Processed {completed_batches} completed batches, {in_progress_batches} still running"
+                )
                 result["success"] = True
                 return result
-            elif batch_status in ["failed", "cancelled"]:
-                logger.warning(f"Active batch {batch_status}, proceeding to create new batch")
-                result["message"] = f"Active batch {batch_status}, creating new batch"
+            elif completed_batches > 0:
+                logger.info(f"Completed {completed_batches} batches - proceeding to create new batch")
+                result["message"] = f"Completed {completed_batches} batches successfully"
             else:
-                result["errors"].append(f"Unknown batch status: {batch_status}")
-                return result
+                logger.warning(f"All {failed_batches} batches failed - proceeding to create new batch")
+                result["message"] = f"All {failed_batches} batches failed, creating new batch"
         else:
-            logger.info("No active batch found")
-            result["message"] = "No active batch found"
+            logger.info("No active batches found")
+            result["message"] = "No active batches found"
 
-        # 3. 신규 배치 생성 (활성 배치가 완료되었거나 없는 경우만)
+        # 2. 신규 배치 생성 (활성 배치가 모두 완료되었거나 없는 경우만)
         logger.info("Creating new batch")
         success = create_new_batch(batch_processor, batch_size)
         result["new_batch_created"] = success
@@ -260,7 +283,18 @@ def main():
 
         # 상세 정보 출력
         if result["active_batch_status"]:
-            print(f"📊 활성 배치 상태: {result['active_batch_status']}")
+            if isinstance(result["active_batch_status"], dict):
+                # 여러 배치 처리 결과
+                status = result["active_batch_status"]
+                print("📊 배치 처리 결과:")
+                print(f"  • 총 처리된 배치: {status['total_processed']}개")
+                print(f"  • 완료된 배치: {status['completed']}개")
+                print(f"  • 진행 중인 배치: {status['in_progress']}개")
+                print(f"  • 실패한 배치: {status['failed']}개")
+            else:
+                # 단일 배치 처리 결과 (이전 버전 호환성)
+                print(f"📊 활성 배치 상태: {result['active_batch_status']}")
+
         if result["new_batch_created"]:
             print("🆕 새로운 배치가 생성되었습니다.")
 
