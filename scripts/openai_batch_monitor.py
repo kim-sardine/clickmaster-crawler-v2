@@ -79,17 +79,39 @@ def process_active_batch(batch_processor: BatchProcessor, active_batch: dict) ->
             logger.info("Batch completed, processing results")
 
             # 배치 결과 처리
-            success = batch_processor.process_batch_results(batch_id)
+            try:
+                success = batch_processor.process_batch_results(batch_id)
 
-            if success:
-                # 배치 상태를 완료로 업데이트
-                batch_processor.update_batch_status(batch_id, "completed")
-                logger.info("Batch processing completed successfully")
-                return "completed"
-            else:
-                # 배치 상태를 실패로 업데이트
-                batch_processor.update_batch_status(batch_id, "failed", "Failed to process batch results")
-                logger.error("Failed to process batch results")
+                if success:
+                    # 배치 상태를 완료로 업데이트
+                    batch_processor.update_batch_status(batch_id, "completed")
+                    logger.info("Batch processing completed successfully")
+                    return "completed"
+                else:
+                    # 배치 상태를 실패로 업데이트
+                    batch_processor.update_batch_status(batch_id, "failed", "Failed to process batch results")
+                    logger.error("Failed to process batch results")
+                    return "failed"
+
+            except Exception as process_error:
+                error_message = str(process_error)
+
+                # 파싱 에러인지 확인하여 더 구체적인 에러 메시지 제공
+                if "Batch parsing failed:" in error_message:
+                    detailed_error = f"Parsing error: {process_error}"
+                    logger.error(f"Batch processing failed due to parsing errors: {process_error}")
+                    logger.error("Action required: Check OpenAI response format and validation logic")
+                elif "No results found" in error_message:
+                    detailed_error = f"No results error: {process_error}"
+                    logger.error(f"Batch processing failed - no results: {process_error}")
+                    logger.error("Action required: Check OpenAI batch completion status")
+                else:
+                    detailed_error = f"System error: {process_error}"
+                    logger.error(f"Batch processing failed due to system error: {process_error}")
+                    logger.error("Action required: Check system logs and network connectivity")
+
+                # 배치 상태를 실패로 업데이트 (구체적인 에러 메시지 포함)
+                batch_processor.update_batch_status(batch_id, "failed", detailed_error)
                 return "failed"
 
         elif batch_status == "failed":

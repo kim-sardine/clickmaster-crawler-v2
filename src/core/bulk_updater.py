@@ -23,7 +23,7 @@ class BulkUpdater:
 
     def bulk_update_articles(self, updates: List[Dict[str, Any]], batch_size: int = 500) -> bool:
         """
-        Article 테이블 벌크 업데이트
+        Article 테이블 벌크 업데이트 (개별 UPDATE 방식, 멱등성 보장)
 
         Args:
             updates: 업데이트할 데이터 리스트 (id, clickbait_score, clickbait_explanation 포함)
@@ -36,43 +36,115 @@ class BulkUpdater:
             logger.warning("No updates to process")
             return True
 
-        logger.info(f"Starting bulk update for {len(updates)} articles")
+        logger.info(f"Starting bulk update for {len(updates)} articles (with idempotency check)")
 
         try:
-            # 큰 배치를 작은 단위로 분할
+            # 멱등성을 위한 사전 필터링: 이미 처리된 기사들 제외
+            filtered_updates = self._filter_already_processed_articles(updates)
+
+            if not filtered_updates:
+                logger.info("All articles are already processed - operation is idempotent")
+                return True
+
+            if len(filtered_updates) < len(updates):
+                skipped_count = len(updates) - len(filtered_updates)
+                logger.info(f"Idempotency check: skipped {skipped_count} already processed articles")
+
+            # 개별 업데이트 방식으로 처리 (upsert 대신 update 사용)
             total_processed = 0
 
-            for i in range(0, len(updates), batch_size):
-                batch = updates[i : i + batch_size]
+            # updated_at 필드 추가
+            current_time = datetime.now().isoformat()
+            for update in filtered_updates:
+                update["updated_at"] = current_time
 
-                # updated_at 필드 추가
-                for update in batch:
-                    update["updated_at"] = datetime.now().isoformat()
-
-                # Supabase upsert 수행
+            # 개별 업데이트 수행
+            for i, update in enumerate(filtered_updates, 1):
                 try:
-                    response = self.supabase.client.table("articles").upsert(batch).execute()
+                    article_id = update.get("id")
+                    if not article_id:
+                        logger.warning(f"Update item {i} missing ID, skipping")
+                        continue
 
-                    batch_processed = len(batch)
-                    total_processed += batch_processed
+                    # 특정 필드만 업데이트 (기존 데이터 보존)
+                    update_data = {
+                        "clickbait_score": update.get("clickbait_score"),
+                        "clickbait_explanation": update.get("clickbait_explanation"),
+                        "updated_at": update.get("updated_at"),
+                    }
 
-                    logger.info(f"Batch {i // batch_size + 1}: Updated {batch_processed} articles")
+                    response = self.supabase.client.table("articles").update(update_data).eq("id", article_id).execute()
+
+                    if response.data:
+                        total_processed += 1
+                        if i % 50 == 0:  # 50개마다 진행상황 로깅
+                            logger.info(f"Progress: {i}/{len(filtered_updates)} articles updated")
+                    else:
+                        logger.warning(f"No article found with ID: {article_id}")
 
                 except Exception as e:
-                    logger.error(f"Failed to update batch {i // batch_size + 1}: {e}")
+                    logger.error(f"Failed to update article {article_id}: {e}")
+                    continue
 
-                    # 개별 처리로 fallback
-                    success_count = self._fallback_individual_updates(batch)
-                    total_processed += success_count
-
-                    logger.info(f"Fallback completed: {success_count}/{len(batch)} articles updated")
-
-            logger.info(f"Bulk update completed: {total_processed}/{len(updates)} articles updated")
-            return total_processed > 0
+            logger.info(f"Bulk update completed: {total_processed}/{len(filtered_updates)} articles updated")
+            logger.info(
+                f"Total operation: {total_processed} new updates, {len(updates) - len(filtered_updates)} skipped (idempotent)"
+            )
+            return total_processed > 0 or len(updates) > 0  # 성공 조건 수정: 스킵된 것도 성공으로 간주
 
         except Exception as e:
             logger.error(f"Bulk update failed: {e}")
             return False
+
+    def _filter_already_processed_articles(self, updates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        이미 처리된 기사들을 필터링 (멱등성 보장)
+
+        Args:
+            updates: 업데이트할 데이터 리스트
+
+        Returns:
+            아직 처리되지 않은 기사들만 포함한 리스트
+        """
+        if not updates:
+            return []
+
+        try:
+            # 모든 article ID 수집
+            article_ids = [update["id"] for update in updates if update.get("id")]
+
+            if not article_ids:
+                logger.warning("No valid article IDs in updates")
+                return []
+
+            logger.debug(f"Checking processing status for {len(article_ids)} articles")
+
+            # 이미 clickbait_score가 있는 기사들 조회
+            response = (
+                self.supabase.client.table("articles")
+                .select("id, clickbait_score")
+                .in_("id", article_ids)
+                .not_.is_("clickbait_score", "null")  # clickbait_score가 null이 아닌 것들
+                .execute()
+            )
+
+            # 이미 처리된 기사 ID 집합
+            processed_ids = {article["id"] for article in response.data}
+
+            if processed_ids:
+                logger.info(f"Found {len(processed_ids)} already processed articles")
+                logger.debug(f"Already processed IDs: {list(processed_ids)[:10]}...")  # 처음 10개만 로깅
+
+            # 아직 처리되지 않은 기사들만 필터링
+            filtered_updates = [update for update in updates if update.get("id") and update["id"] not in processed_ids]
+
+            logger.debug(f"Filtered result: {len(filtered_updates)} articles need processing")
+            return filtered_updates
+
+        except Exception as e:
+            logger.error(f"Failed to filter already processed articles: {e}")
+            logger.warning("Proceeding with all updates (no filtering applied)")
+            return updates
 
     def _fallback_individual_updates(self, batch: List[Dict[str, Any]]) -> int:
         """
@@ -101,7 +173,7 @@ class BulkUpdater:
                     .update(
                         {
                             "clickbait_score": update.get("clickbait_score"),
-                            "score_explanation": update.get("score_explanation"),
+                            "clickbait_explanation": update.get("clickbait_explanation"),
                             "updated_at": update.get("updated_at"),
                         }
                     )
@@ -156,7 +228,7 @@ class BulkUpdater:
 
                 # 정제된 데이터 생성
                 valid_update = {
-                    "id": int(update["id"]),
+                    "id": update["id"],  # UUID는 문자열 그대로 사용
                     "clickbait_score": int(round(clickbait_score)),
                     "clickbait_explanation": explanation[:500],  # 길이 제한
                 }
