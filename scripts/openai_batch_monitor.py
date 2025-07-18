@@ -147,51 +147,53 @@ def create_new_batch(batch_processor: BatchProcessor, batch_size: int = 100) -> 
     """
     logger.info(f"Creating new batch (size: {batch_size})")
 
-    try:
-        # 🔒 1차 체크: 신규 배치 생성 전 활성 배치 재확인 (이중 안전장치)
-        logger.info("Performing final active batch check before creation")
-        active_batches = batch_processor.get_all_active_batches()
+    # 🔒 1차 체크: 신규 배치 생성 전 활성 배치 재확인 (이중 안전장치)
+    logger.info("Performing final active batch check before creation")
+    active_batches = batch_processor.get_all_active_batches()
 
-        if active_batches:
-            logger.warning(f"Aborting batch creation: Found {len(active_batches)} active batches")
-            for i, batch in enumerate(active_batches):
-                logger.warning(f"  Active batch {i + 1}: {batch['batch_id']} (status: {batch['status']})")
-            return True  # 처리할 데이터가 없는 것은 정상 (실패가 아님)
+    if active_batches:
+        logger.warning(f"Aborting batch creation: Found {len(active_batches)} active batches")
+        for i, batch in enumerate(active_batches):
+            logger.warning(f"  Active batch {i + 1}: {batch['batch_id']} (status: {batch['status']})")
+        return True  # 처리할 데이터가 없는 것은 정상 (실패가 아님)
 
-        # 미처리 Article 조회
-        pending_articles = batch_processor.get_pending_articles(limit=batch_size)
+    # 미처리 Article 조회
+    pending_articles = batch_processor.get_pending_articles(limit=batch_size)
 
-        if not pending_articles:
-            logger.info("No pending articles found")
-            return True  # 처리할 데이터가 없는 것은 정상
+    if not pending_articles:
+        logger.info("No pending articles found")
+        return True  # 처리할 데이터가 없는 것은 정상
 
-        logger.info(f"Found {len(pending_articles)} pending articles")
+    logger.info(f"Found {len(pending_articles)} pending articles")
 
-        # 🔒 2차 체크: 배치 요청 생성 (내부적으로 사전 체크 수행)
-        batch_info = batch_processor.create_batch_request(pending_articles)
+    # 🔒 2차 체크: 배치 요청 생성 (내부적으로 사전 체크 수행)
+    batch_info = batch_processor.create_batch_request(pending_articles)
 
-        if not batch_info:
-            logger.warning("Failed to create batch request (may be due to concurrent batch creation)")
-            return True  # 동시성 제어로 인한 실패는 정상 처리
+    if not batch_info:
+        # 동시성 제어인지 실제 실패인지 확인
+        # 활성 배치가 없는데 batch_info가 None이면 실제 OpenAI 실패
+        active_batches_recheck = batch_processor.get_all_active_batches()
+        if not active_batches_recheck:
+            logger.error("Batch creation failed - likely OpenAI API error")
+            raise Exception("OpenAI batch creation failed")
 
-        # 🔒 3차 체크: 배치 정보를 데이터베이스에 저장 (원자적 처리)
-        saved_batch = batch_processor.save_batch_info_to_database(batch_info, len(pending_articles))
+        logger.info("Batch creation skipped due to concurrent batch creation prevention")
+        return True  # 동시성 제어로 인한 실패는 정상 처리
 
-        if saved_batch:
-            logger.info(f"New batch created successfully: {batch_info['id']}")
-            logger.info(f"  Articles to process: {len(pending_articles)}")
-            logger.info(f"  Database record ID: {saved_batch.get('id', 'unknown')}")
-            return True
-        else:
-            logger.warning("Failed to save batch info to database (may be due to concurrent batch creation)")
-            # OpenAI 배치는 생성되었지만 DB 저장 실패 - 경고 로그
-            logger.warning(f"⚠️ OpenAI batch {batch_info['id']} was created but not recorded in database")
-            logger.warning("This batch may need manual cleanup or will be detected in next monitoring cycle")
-            return True  # 동시성 제어로 인한 실패는 정상 처리
+    # 🔒 3차 체크: 배치 정보를 데이터베이스에 저장 (원자적 처리)
+    saved_batch = batch_processor.save_batch_info_to_database(batch_info, len(pending_articles))
 
-    except Exception as e:
-        logger.error(f"Error creating new batch: {e}")
-        return False
+    if saved_batch:
+        logger.info(f"New batch created successfully: {batch_info['id']}")
+        logger.info(f"  Articles to process: {len(pending_articles)}")
+        logger.info(f"  Database record ID: {saved_batch.get('id', 'unknown')}")
+        return True
+    else:
+        logger.warning("Failed to save batch info to database (may be due to concurrent batch creation)")
+        # OpenAI 배치는 생성되었지만 DB 저장 실패 - 경고 로그
+        logger.warning(f"⚠️ OpenAI batch {batch_info['id']} was created but not recorded in database")
+        logger.warning("This batch may need manual cleanup or will be detected in next monitoring cycle")
+        return True  # 동시성 제어로 인한 실패는 정상 처리
 
 
 def run_batch_monitor(batch_size: int = 100) -> dict:

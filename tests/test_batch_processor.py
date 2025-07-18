@@ -109,13 +109,15 @@ class TestBatchProcessor:
         mock_prompt_generator.generate_batch_requests.return_value = mock_batch_requests
         mock_openai_client.create_batch.return_value = {"id": "batch_123", "status": "validating"}
 
-        # When
-        result = batch_processor.create_batch_request(articles)
+        # Pre-check이 성공하도록 Mock 설정
+        with patch.object(batch_processor, "_pre_check_batch_creation", return_value=True):
+            # When
+            result = batch_processor.create_batch_request(articles)
 
-        # Then
-        assert result["id"] == "batch_123"
-        mock_prompt_generator.generate_batch_requests.assert_called_once_with(articles)
-        mock_openai_client.create_batch.assert_called_once_with(mock_batch_requests)
+            # Then
+            assert result["id"] == "batch_123"
+            mock_prompt_generator.generate_batch_requests.assert_called_once_with(articles)
+            mock_openai_client.create_batch.assert_called_once_with(mock_batch_requests)
 
     def test_process_batch_results_handles_valid_responses(
         self, batch_processor, mock_openai_client, mock_bulk_updater
