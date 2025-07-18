@@ -463,7 +463,7 @@ class BatchProcessor:
 
             if active_check.data:
                 concurrent_batch = active_check.data[0]
-                logger.warning(f"❌ Concurrent batch creation prevented!")
+                logger.warning("❌ Concurrent batch creation prevented!")
                 logger.warning(f"  Another batch is already in progress: {concurrent_batch['batch_id']}")
                 logger.warning(f"  Concurrent batch created: {concurrent_batch.get('created_at', 'unknown')}")
                 logger.warning(f"  Current batch to save: {batch_id}")
@@ -482,7 +482,6 @@ class BatchProcessor:
                 "status": "in_progress",
                 "article_count": article_count,
                 "created_at": batch_info.get("created_at", datetime.now().isoformat()),
-                "openai_status": batch_info.get("status", "unknown"),  # OpenAI 상태도 기록
             }
 
             logger.info(f"  Batch data to insert: {batch_data}")
