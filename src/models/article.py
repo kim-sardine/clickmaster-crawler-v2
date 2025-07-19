@@ -48,6 +48,64 @@ class Article:
         if self.clickbait_score is not None and not (0 <= self.clickbait_score <= 100):
             raise ValueError("낚시 점수는 0-100 사이의 값이어야 합니다")
 
+    def is_duplicate_of(self, other: "Article") -> bool:
+        """
+        다른 기사와 중복인지 확인
+
+        중복 기준:
+        1. naver_url이 동일하면 중복 OR
+        2. title, content, journalist_name, publisher가 모두 동일하면 중복
+
+        Args:
+            other: 비교할 다른 기사
+
+        Returns:
+            중복 여부
+        """
+        if not isinstance(other, Article):
+            return False
+
+        # naver_url이 동일하면 중복
+        if self.naver_url == other.naver_url:
+            return True
+
+        # title, content, journalist_name, publisher가 모두 동일하면 중복
+        return (
+            self.title == other.title
+            and self.content == other.content
+            and self.journalist_name == other.journalist_name
+            and self.publisher == other.publisher
+        )
+
+    def get_duplicate_key(self) -> tuple:
+        """중복 체크용 키 생성"""
+        return (
+            self.naver_url,
+            self.title,
+            self.content,
+            self.journalist_name,
+            self.publisher,
+        )
+
+    def get_content_key(self) -> tuple:
+        """내용 기반 중복 체크용 키 생성"""
+        return (
+            self.title,
+            self.content,
+            self.journalist_name,
+            self.publisher,
+        )
+
+    def __eq__(self, other) -> bool:
+        """동등성 비교"""
+        if not isinstance(other, Article):
+            return False
+        return self.is_duplicate_of(other)
+
+    def __hash__(self) -> int:
+        """해시값 생성"""
+        return hash(self.get_duplicate_key())
+
     def to_dict(self) -> dict:
         """딕셔너리로 변환"""
         data = {

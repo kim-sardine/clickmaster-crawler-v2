@@ -384,52 +384,6 @@ class DatabaseOperations:
         logger.info(f"개별 삽입 완료: {len(inserted_articles)}/{len(articles)}개 기사")
         return inserted_articles
 
-    def check_duplicate_article(self, naver_url: str) -> bool:
-        """
-        중복 기사 체크
-
-        Args:
-            naver_url: 네이버 뉴스 URL
-
-        Returns:
-            중복 여부
-        """
-        try:
-            result = self.client.client.table("articles").select("id").eq("naver_url", naver_url).execute()
-
-            return len(result.data) > 0
-
-        except Exception as e:
-            logger.error(f"중복 체크 오류: {e}")
-            return False
-
-    def check_duplicate_articles_batch(self, naver_urls: List[str]) -> Dict[str, bool]:
-        """
-        배치로 중복 기사 체크 (성능 최적화)
-
-        Args:
-            naver_urls: 네이버 뉴스 URL 리스트
-
-        Returns:
-            URL별 중복 여부 딕셔너리
-        """
-        try:
-            if not naver_urls:
-                return {}
-
-            # 기존 URL들 조회 (한 번의 쿼리로 처리)
-            result = self.client.client.table("articles").select("naver_url").in_("naver_url", naver_urls).execute()
-
-            existing_urls = {item["naver_url"] for item in result.data}
-
-            # 모든 URL에 대한 중복 여부 반환
-            return {url: url in existing_urls for url in naver_urls}
-
-        except Exception as e:
-            logger.error(f"배치 중복 체크 오류: {e}")
-            # 실패 시 모든 URL을 중복 없음으로 처리
-            return {url: False for url in naver_urls}
-
     def get_unprocessed_articles(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """
         미처리 기사 조회 (clickbait_score가 null인 기사)
