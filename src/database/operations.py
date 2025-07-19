@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from .supabase_client import get_supabase_client
 from src.models.article import Article, Journalist
 from src.utils.logging_utils import get_logger
+from src.utils.text_utils import normalize_journalist_info
 
 logger = get_logger(__name__)
 
@@ -31,14 +32,9 @@ class DatabaseOperations:
             기자 정보 딕셔너리
         """
         try:
-            # 이름과 언론사 정규화
-            name = name.strip()
-            publisher = publisher.strip()
-
-            # 익명 기자 처리 - 각 언론사별로 별도의 익명 기자 생성
-            if name in ["익명", "기자", "", " "]:
-                name = f"익명기자_{publisher}"
-                logger.debug(f"익명 기자명 정규화: {name}")
+            # 기자명과 언론사명 정규화
+            name, publisher = normalize_journalist_info(name, publisher)
+            logger.debug(f"기자명 정규화 완료: {name} ({publisher})")
 
             # 기존 기자 조회
             existing = (
@@ -89,13 +85,8 @@ class DatabaseOperations:
             unique_keys = set()
 
             for name, publisher in journalist_specs:
-                # 정규화
-                name = name.strip()
-                publisher = publisher.strip()
-
-                # 익명 기자 처리
-                if name in ["익명", "기자", "", " "]:
-                    name = f"익명기자_{publisher}"
+                # 기자명과 언론사명 정규화
+                name, publisher = normalize_journalist_info(name, publisher)
 
                 journalist_key = f"{name}_{publisher}"
                 if journalist_key not in unique_keys:

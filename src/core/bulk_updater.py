@@ -161,7 +161,6 @@ class BulkUpdater:
 
         for update in updates:
             try:
-                # 필수 필드 확인
                 if not update.get("id"):
                     logger.warning("Update item missing ID, skipping")
                     continue
@@ -171,22 +170,19 @@ class BulkUpdater:
                     logger.warning(f"Article {update.get('id')} missing clickbait_score, skipping")
                     continue
 
-                # clickbait_score 유효성 검증
                 if not isinstance(clickbait_score, (int, float)) or not (0 <= clickbait_score <= 100):
                     logger.warning(f"Article {update.get('id')} has invalid clickbait_score: {clickbait_score}")
                     continue
 
-                # clickbait_explanation 확인
                 explanation = update.get("clickbait_explanation", "").strip()
                 if not explanation:
                     logger.warning(f"Article {update.get('id')} missing explanation, using default")
                     explanation = "자동 생성된 점수"
 
-                # 정제된 데이터 생성
                 valid_update = {
-                    "id": update["id"],  # UUID는 문자열 그대로 사용
+                    "id": update["id"],
                     "clickbait_score": int(round(clickbait_score)),
-                    "clickbait_explanation": explanation[:500],  # 길이 제한
+                    "clickbait_explanation": explanation[:500],
                 }
 
                 valid_updates.append(valid_update)
@@ -197,39 +193,3 @@ class BulkUpdater:
 
         logger.info(f"Validation completed: {len(valid_updates)}/{len(updates)} items valid")
         return valid_updates
-
-    def update_batch_status(self, batch_id: str, status: str, error_message: Optional[str] = None) -> bool:
-        """
-        배치 상태 업데이트
-
-        Args:
-            batch_id: 배치 ID
-            status: 새로운 상태 ('completed', 'failed', 'cancelled')
-            error_message: 에러 메시지 (선택사항)
-
-        Returns:
-            성공 여부
-        """
-        logger.info(f"Updating batch {batch_id} status to {status}")
-
-        try:
-            update_data = {
-                "status": status,
-                "completed_at": datetime.now().isoformat() if status in ["completed", "failed", "cancelled"] else None,
-            }
-
-            if error_message:
-                update_data["error_message"] = error_message
-
-            response = self.supabase.client.table("batch").update(update_data).eq("batch_id", batch_id).execute()
-
-            if response.data:
-                logger.info(f"Batch status updated successfully")
-                return True
-            else:
-                logger.warning(f"No batch found with ID: {batch_id}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Failed to update batch status: {e}")
-            return False

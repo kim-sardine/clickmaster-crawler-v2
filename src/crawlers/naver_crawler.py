@@ -15,6 +15,7 @@ from src.config.settings import settings
 from src.models.article import Article
 from src.database.operations import DatabaseOperations
 from src.utils.logging_utils import get_logger
+from src.utils.text_utils import normalize_journalist_info
 
 logger = get_logger(__name__)
 
@@ -302,10 +303,13 @@ class NaverNewsCrawler:
                 journalist_name = crawl_result.journalist_name if crawl_result.journalist_name else "익명"
                 publisher = crawl_result.publisher if crawl_result.publisher else "네이버뉴스"
 
-            # 기자명 정규화 (빈 값이나 공백만 있는 경우 처리)
+            # 기자명이 빈 값이나 공백만 있는 경우 처리
             journalist_name = journalist_name.strip()
             if not journalist_name or journalist_name in ["기자", "사용자"]:
                 journalist_name = "익명"
+
+            # 기자명과 언론사명 정규화
+            journalist_name, publisher = normalize_journalist_info(journalist_name, publisher)
 
             # 기사 제목이 9자 미만이면 None 반환
             if len(title.strip()) < 9:
