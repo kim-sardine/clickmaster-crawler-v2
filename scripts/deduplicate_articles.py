@@ -57,8 +57,8 @@ def find_duplicate_groups() -> List[Dict[str, Any]]:
 
         result = client.client.rpc("execute_sql", {"query": query}).execute()
 
-        if result.data:
-            duplicate_groups = result.data
+        if result.data and result.data[0]["result"]:
+            duplicate_groups = result.data[0]["result"]
             logger.info(
                 f"중복 그룹 발견: {len(duplicate_groups)}개 그룹, 총 중복 기사 수: {sum(g['duplicate_count'] for g in duplicate_groups)}"
             )
@@ -68,8 +68,9 @@ def find_duplicate_groups() -> List[Dict[str, Any]]:
             return []
 
     except Exception as e:
-        logger.error(f"중복 그룹 조회 오류: {e}")
-        # RPC 함수가 없는 경우 대안 방법 사용
+        logger.error(f"RPC 함수 사용 중 오류 발생: {e}")
+        logger.info("대안 방법으로 중복 그룹을 찾습니다")
+        # RPC 함수가 실패한 경우 대안 방법 사용
         return find_duplicate_groups_alternative()
 
 
@@ -126,7 +127,12 @@ def find_duplicate_groups_alternative() -> List[Dict[str, Any]]:
         # 중복 수 내림차순으로 정렬
         duplicate_groups.sort(key=lambda x: -x["duplicate_count"])
 
-        logger.info(f"중복 그룹 발견: {len(duplicate_groups)}개 그룹")
+        if duplicate_groups:
+            total_duplicates = sum(g["duplicate_count"] for g in duplicate_groups)
+            logger.info(f"중복 그룹 발견: {len(duplicate_groups)}개 그룹, 총 중복 기사 수: {total_duplicates}개")
+        else:
+            logger.info("중복 기사가 발견되지 않았습니다")
+
         return duplicate_groups
 
     except Exception as e:
