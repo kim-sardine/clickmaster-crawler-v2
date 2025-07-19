@@ -19,7 +19,7 @@ SERPAPI_TRENDS_URL = "https://serpapi.com/search"
 VALID_CHARS_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9\s\.\,\'\"\-\+\?\!\/\(\)\[\]\{\}\:\;\&\%\@\#\*\^\$\_\=\~\`\\]+$")
 
 # 사용할 최대 키워드 수
-MAX_KEYWORDS = 20
+MAX_KEYWORDS = 10
 
 
 @log_func
