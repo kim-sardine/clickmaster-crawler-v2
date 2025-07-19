@@ -10,10 +10,6 @@ on:
         description: '배치 크기 (1-800)'
         required: false
         type: number
-      skip_deduplication:
-        description: '중복 제거 작업 건너뛰기'
-        required: false
-        type: boolean
 
 jobs:
   maintenance-tasks:
@@ -53,20 +49,10 @@ jobs:
           BATCH_SIZE="800"
         fi
         
-        # 중복 제거 건너뛰기 설정
-        if [ "${{ github.event.inputs.skip_deduplication }}" = "true" ]; then
-          SKIP_DEDUP="true"
-        else
-          SKIP_DEDUP="false"
-        fi
-        
         echo "batch_size=${BATCH_SIZE}" >> $GITHUB_OUTPUT
-        echo "skip_deduplication=${SKIP_DEDUP}" >> $GITHUB_OUTPUT
         echo "Batch size: ${BATCH_SIZE}"
-        echo "Skip deduplication: ${SKIP_DEDUP}"
         
     - name: Run Article Deduplication
-      if: steps.params.outputs.skip_deduplication != 'true'
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -77,11 +63,6 @@ jobs:
         
         python -m scripts.deduplicate_articles
         
-    - name: Skip Deduplication Notice
-      if: steps.params.outputs.skip_deduplication == 'true'
-      run: |
-        echo "⏭️ Article deduplication skipped by user input"
-
     - name: Run OpenAI Batch Monitor
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
