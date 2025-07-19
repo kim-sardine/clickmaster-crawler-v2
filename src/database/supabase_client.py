@@ -39,14 +39,12 @@ class SupabaseClient:
     def test_connection(self) -> bool:
         """연결 테스트"""
         try:
-            # 간단한 쿼리로 연결 테스트
             result = self.client.table("articles").select("id").limit(1).execute()
             return True
         except Exception:
             return False
 
 
-# 전역 인스턴스
 _supabase_client = None
 
 

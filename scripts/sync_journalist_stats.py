@@ -6,7 +6,6 @@ GitHub workflow에서 정기적으로 실행되어 기자 통계를 업데이트
 """
 
 import sys
-import logging
 import argparse
 from datetime import datetime
 
@@ -23,10 +22,11 @@ def validate_environment() -> bool:
         return False
 
     required_vars = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
+    logger = get_logger(__name__)
 
     for var in required_vars:
         if not hasattr(settings, var) or not getattr(settings, var):
-            logging.error(f"필수 환경변수가 설정되지 않았습니다: {var}")
+            logger.error(f"필수 환경변수가 설정되지 않았습니다: {var}")
             return False
 
     return True

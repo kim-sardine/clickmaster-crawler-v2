@@ -4,8 +4,6 @@ OpenAI 클라이언트 모듈
 
 import json
 import tempfile
-import logging
-from io import StringIO
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 

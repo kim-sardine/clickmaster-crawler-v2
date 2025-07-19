@@ -3,7 +3,6 @@
 """
 
 import json
-import logging
 from typing import List, Dict, Any
 
 from src.utils.logging_utils import get_logger

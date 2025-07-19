@@ -4,7 +4,6 @@
 
 import re
 import time
-import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import pytz
@@ -13,7 +12,7 @@ from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 
 from src.config.settings import settings
-from src.models.article import Article, Journalist
+from src.models.article import Article
 from src.database.operations import DatabaseOperations
 from src.utils.logging_utils import get_logger
 

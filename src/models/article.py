@@ -8,16 +8,6 @@ from typing import Optional
 
 
 @dataclass
-class NaverNewsCrawlerResult:
-    """네이버 뉴스 크롤링 결과 모델"""
-
-    title: str
-    content: str
-    reporter: str
-    publisher: str
-
-
-@dataclass
 class Article:
     """기사 데이터 모델"""
 

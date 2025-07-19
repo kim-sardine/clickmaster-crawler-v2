@@ -2,7 +2,6 @@
 벌크 업데이트 모듈
 """
 
-import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -145,50 +144,6 @@ class BulkUpdater:
             logger.error(f"Failed to filter already processed articles: {e}")
             logger.warning("Proceeding with all updates (no filtering applied)")
             return updates
-
-    def _fallback_individual_updates(self, batch: List[Dict[str, Any]]) -> int:
-        """
-        배치 업데이트 실패 시 개별 업데이트로 fallback
-
-        Args:
-            batch: 업데이트할 배치 데이터
-
-        Returns:
-            성공한 업데이트 수
-        """
-        logger.warning("Falling back to individual updates")
-
-        success_count = 0
-        current_time = datetime.now().isoformat()
-
-        for update in batch:
-            try:
-                article_id = update.get("id")
-                if not article_id:
-                    logger.warning("Update item without ID, skipping")
-                    continue
-
-                # 개별 업데이트
-                response = (
-                    self.supabase.client.table("articles")
-                    .update(
-                        {
-                            "clickbait_score": update.get("clickbait_score"),
-                            "clickbait_explanation": update.get("clickbait_explanation"),
-                            "updated_at": current_time,
-                        }
-                    )
-                    .eq("id", article_id)
-                    .execute()
-                )
-
-                success_count += 1
-
-            except Exception as e:
-                logger.error(f"Failed to update article {article_id}: {e}")
-                continue
-
-        return success_count
 
     def validate_updates(self, updates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

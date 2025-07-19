@@ -15,7 +15,6 @@ OpenAI Batch API 클릭베이트 점수 측정 - 배치 생성 및 모니터링
 import os
 import sys
 import argparse
-import logging
 
 from src.config.settings import settings
 from src.database.supabase_client import get_supabase_client

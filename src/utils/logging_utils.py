@@ -6,7 +6,6 @@ import logging
 import functools
 from typing import Callable, Any, Optional
 
-# 전역 로깅 설정 상태 추적
 _logging_configured = False
 
 
@@ -20,21 +19,19 @@ def setup_logging(level: str = "INFO", format_string: Optional[str] = None) -> N
     """
     global _logging_configured
 
-    # 이미 설정된 경우 중복 설정 방지
     if _logging_configured:
         return
 
     if format_string is None:
         format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    # 루트 로거 설정
     logging.basicConfig(
         level=getattr(logging, level.upper()),
         format=format_string,
         handlers=[
-            logging.StreamHandler(),  # 콘솔 출력만
+            logging.StreamHandler(),
         ],
-        force=True,  # 기존 설정 덮어쓰기
+        force=True,
     )
 
     _logging_configured = True

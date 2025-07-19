@@ -2,10 +2,8 @@
 데이터베이스 운영 모듈
 """
 
-import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-import pytz
 
 from .supabase_client import get_supabase_client
 from src.models.article import Article, Journalist
@@ -56,7 +54,6 @@ class DatabaseOperations:
                 logger.debug(f"기존 기자 조회: {name} ({publisher}) - ID: {journalist_info['id']}")
                 return journalist_info
 
-            # 새 기자 생성
             journalist = Journalist(name=name, publisher=publisher, naver_uuid=naver_uuid)
             journalist_data = journalist.to_dict()
 
@@ -64,7 +61,7 @@ class DatabaseOperations:
 
             if result.data:
                 new_journalist = result.data[0]
-                logger.info(f"🆕 새 기자 생성: {name} ({publisher}) - ID: {new_journalist['id']}")
+                logger.info(f"새 기자 생성: {name} ({publisher}) - ID: {new_journalist['id']}")
                 return new_journalist
             else:
                 raise Exception("기자 생성 실패 - 응답 데이터 없음")
@@ -181,7 +178,7 @@ class DatabaseOperations:
                             key = f"{journalist['name']}_{journalist['publisher']}"
                             existing_journalists[key] = journalist
                             logger.debug(
-                                f"🆕 새 기자 생성: {journalist['name']} ({journalist['publisher']}) - ID: {journalist['id']}"
+                                f"새 기자 생성: {journalist['name']} ({journalist['publisher']}) - ID: {journalist['id']}"
                             )
                     else:
                         logger.error("배치 기자 생성 실패 - 응답 데이터 없음")
@@ -198,7 +195,7 @@ class DatabaseOperations:
                                 journalist = individual_result.data[0]
                                 key = f"{journalist['name']}_{journalist['publisher']}"
                                 existing_journalists[key] = journalist
-                                logger.info(f"🆕 개별 기자 생성: {journalist['name']} ({journalist['publisher']})")
+                                logger.info(f"개별 기자 생성: {journalist['name']} ({journalist['publisher']})")
                         except Exception as individual_e:
                             logger.error(
                                 f"개별 기자 생성 실패 [{journalist_data['name']}, {journalist_data['publisher']}]: {individual_e}"
