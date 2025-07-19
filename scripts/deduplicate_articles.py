@@ -31,112 +31,39 @@ def find_duplicate_groups() -> List[Dict[str, Any]]:
     """
     client = get_supabase_client()
 
-    try:
-        # title, content, journalist_name, publisher 기준으로 그룹화하여 중복 찾기
-        query = """
-        SELECT 
-            title,
-            content,
-            journalist_name,
-            publisher,
-            COUNT(*) as duplicate_count,
-            array_agg(
-                json_build_object(
-                    'id', id,
-                    'clickbait_score', COALESCE(clickbait_score, 0),
-                    'created_at', created_at,
-                    'naver_url', naver_url
-                ) 
-                ORDER BY COALESCE(clickbait_score, 0) DESC, created_at ASC
-            ) as articles
-        FROM articles
-        GROUP BY title, content, journalist_name, publisher
-        HAVING COUNT(*) > 1
-        ORDER BY duplicate_count DESC
-        """
-
-        result = client.client.rpc("execute_sql", {"query": query}).execute()
-
-        if result.data and result.data[0]["result"]:
-            duplicate_groups = result.data[0]["result"]
-            logger.info(
-                f"중복 그룹 발견: {len(duplicate_groups)}개 그룹, 총 중복 기사 수: {sum(g['duplicate_count'] for g in duplicate_groups)}"
-            )
-            return duplicate_groups
-        else:
-            logger.info("중복 기사가 발견되지 않았습니다")
-            return []
-
-    except Exception as e:
-        logger.error(f"RPC 함수 사용 중 오류 발생: {e}")
-        logger.info("대안 방법으로 중복 그룹을 찾습니다")
-        # RPC 함수가 실패한 경우 대안 방법 사용
-        return find_duplicate_groups_alternative()
-
-
-def find_duplicate_groups_alternative() -> List[Dict[str, Any]]:
+    # title, content, journalist_name, publisher 기준으로 그룹화하여 중복 찾기
+    query = """
+    SELECT 
+        title,
+        content,
+        journalist_name,
+        publisher,
+        COUNT(*) as duplicate_count,
+        array_agg(
+            json_build_object(
+                'id', id,
+                'clickbait_score', COALESCE(clickbait_score, 0),
+                'created_at', created_at,
+                'naver_url', naver_url
+            ) 
+            ORDER BY COALESCE(clickbait_score, 0) DESC, created_at ASC
+        ) as articles
+    FROM articles
+    GROUP BY title, content, journalist_name, publisher
+    HAVING COUNT(*) > 1
+    ORDER BY duplicate_count DESC
     """
-    RPC 함수가 없는 경우 대안 방법으로 중복 그룹 찾기
-    """
-    client = get_supabase_client()
 
-    try:
-        # 모든 기사 조회
-        result = client.client.table("articles").select("*").execute()
+    result = client.client.rpc("execute_sql", {"query": query}).execute()
 
-        if not result.data:
-            logger.info("기사가 없습니다")
-            return []
-
-        # 파이썬에서 그룹화 처리
-        content_groups = {}
-
-        for article in result.data:
-            content_key = (article["title"], article["content"], article["journalist_name"], article["publisher"])
-
-            if content_key not in content_groups:
-                content_groups[content_key] = []
-
-            content_groups[content_key].append(
-                {
-                    "id": article["id"],
-                    "clickbait_score": article["clickbait_score"] if article["clickbait_score"] is not None else 0,
-                    "created_at": article["created_at"],
-                    "naver_url": article["naver_url"],
-                }
-            )
-
-        # 중복 그룹만 필터링
-        duplicate_groups = []
-        for (title, content, journalist_name, publisher), articles in content_groups.items():
-            if len(articles) > 1:
-                # clickbait_score 내림차순, created_at 오름차순으로 정렬
-                articles.sort(key=lambda x: (-x["clickbait_score"], x["created_at"]))
-
-                duplicate_groups.append(
-                    {
-                        "title": title,
-                        "content": content,
-                        "journalist_name": journalist_name,
-                        "publisher": publisher,
-                        "duplicate_count": len(articles),
-                        "articles": articles,
-                    }
-                )
-
-        # 중복 수 내림차순으로 정렬
-        duplicate_groups.sort(key=lambda x: -x["duplicate_count"])
-
-        if duplicate_groups:
-            total_duplicates = sum(g["duplicate_count"] for g in duplicate_groups)
-            logger.info(f"중복 그룹 발견: {len(duplicate_groups)}개 그룹, 총 중복 기사 수: {total_duplicates}개")
-        else:
-            logger.info("중복 기사가 발견되지 않았습니다")
-
+    if result.data and result.data[0]["result"]:
+        duplicate_groups = result.data[0]["result"]
+        logger.info(
+            f"중복 그룹 발견: {len(duplicate_groups)}개 그룹, 총 중복 기사 수: {sum(g['duplicate_count'] for g in duplicate_groups)}"
+        )
         return duplicate_groups
-
-    except Exception as e:
-        logger.error(f"대안 방법 중복 그룹 조회 오류: {e}")
+    else:
+        logger.info("중복 기사가 발견되지 않았습니다")
         return []
 
 
