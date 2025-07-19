@@ -1,4 +1,4 @@
-name: Hourly OpenAI Batch Monitor
+name: Hourly Maintenance Tasks
 
 on:
   schedule:
@@ -10,12 +10,16 @@ on:
         description: '배치 크기 (1-800)'
         required: false
         type: number
+      skip_deduplication:
+        description: '중복 제거 작업 건너뛰기'
+        required: false
+        type: boolean
 
 jobs:
-  monitor-batch:
+  maintenance-tasks:
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 30  # 30분 타임아웃
+    timeout-minutes: 45  # 전체 작업에 대한 타임아웃
     
     steps:
     - name: Checkout repository
@@ -39,32 +43,53 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Set batch parameters
+    - name: Set parameters
       id: params
       run: |
-        # 배치 크기 설정 (수동 실행 시 입력값, 자동 실행 시 기본값 100)
+        # 배치 크기 설정
         if [ -n "${{ github.event.inputs.batch_size }}" ]; then
           BATCH_SIZE="${{ github.event.inputs.batch_size }}"
         else
           BATCH_SIZE="800"
         fi
         
-        echo "batch_size=${BATCH_SIZE}" >> $GITHUB_OUTPUT
-        echo "Batch size: ${BATCH_SIZE}"
+        # 중복 제거 건너뛰기 설정
+        if [ "${{ github.event.inputs.skip_deduplication }}" = "true" ]; then
+          SKIP_DEDUP="true"
+        else
+          SKIP_DEDUP="false"
+        fi
         
+        echo "batch_size=${BATCH_SIZE}" >> $GITHUB_OUTPUT
+        echo "skip_deduplication=${SKIP_DEDUP}" >> $GITHUB_OUTPUT
+        echo "Batch size: ${BATCH_SIZE}"
+        echo "Skip deduplication: ${SKIP_DEDUP}"
+        
+    - name: Run Article Deduplication
+      if: steps.params.outputs.skip_deduplication != 'true'
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      run: |
+        echo "🔄 Starting article deduplication..."
+        echo "📅 Current time (UTC): $(date -u)"
+        echo "📅 Current time (KST): $(TZ=Asia/Seoul date)"
+        
+        python -m scripts.deduplicate_articles
+        
+    - name: Skip Deduplication Notice
+      if: steps.params.outputs.skip_deduplication == 'true'
+      run: |
+        echo "⏭️ Article deduplication skipped by user input"
+
     - name: Run OpenAI Batch Monitor
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
-        # 기본 명령어 구성
-        CMD="python -m scripts.openai_batch_monitor"
-        CMD="${CMD} --batch-size ${{ steps.params.outputs.batch_size }}"
-        
-        echo "🚀 Executing: ${CMD}"
+        echo "🚀 Starting OpenAI batch monitoring..."
         echo "📅 Current time (UTC): $(date -u)"
         echo "📅 Current time (KST): $(TZ=Asia/Seoul date)"
         
-        # 스크립트 실행
-        ${CMD}
+        python -m scripts.openai_batch_monitor --batch-size ${{ steps.params.outputs.batch_size }}
