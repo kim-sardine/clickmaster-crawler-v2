@@ -74,3 +74,14 @@ jobs:
         echo "📅 Current time (KST): $(TZ=Asia/Seoul date)"
         
         python -m scripts.openai_batch_monitor --batch-size ${{ steps.params.outputs.batch_size }}
+        
+    - name: Sync Journalist Statistics
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      run: |
+        echo "📊 Starting journalist statistics synchronization..."
+        echo "📅 Current time (UTC): $(date -u)"
+        echo "📅 Current time (KST): $(TZ=Asia/Seoul date)"
+        
+        python -m scripts.sync_journalist_stats

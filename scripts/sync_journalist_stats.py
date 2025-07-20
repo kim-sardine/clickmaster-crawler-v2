@@ -207,18 +207,16 @@ def print_result_summary(result: dict):
 def main():
     """메인 함수"""
     parser = argparse.ArgumentParser(description="기자 통계 동기화 스크립트")
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="로그 레벨")
     parser.add_argument(
         "--fix-inconsistencies", action="store_true", default=True, help="통계 불일치 감지 및 수정 (기본값: True)"
     )
     parser.add_argument("--no-fix-inconsistencies", action="store_true", help="통계 불일치 수정 비활성화")
     parser.add_argument("--full-update", action="store_true", help="모든 기자 통계 강제 업데이트")
-    parser.add_argument("--quiet", action="store_true", help="요약 출력 생략")
 
     args = parser.parse_args()
 
     # 로깅 설정
-    setup_logging(args.log_level)
+    setup_logging("INFO")
     logger = get_logger(__name__)
 
     try:
@@ -234,8 +232,7 @@ def main():
         result = run_stats_sync(fix_inconsistencies=fix_inconsistencies, full_update=args.full_update)
 
         # 결과 출력
-        if not args.quiet:
-            print_result_summary(result)
+        print_result_summary(result)
 
         # 종료 코드 설정
         if result["success"]:
