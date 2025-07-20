@@ -18,9 +18,6 @@ from src.utils.logging_utils import setup_logging, get_logger
 
 def validate_environment() -> bool:
     """환경 변수 검증"""
-    if not settings.validate():
-        return False
-
     required_vars = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
     logger = get_logger(__name__)
 
