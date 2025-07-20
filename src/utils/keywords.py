@@ -19,7 +19,7 @@ SERPAPI_TRENDS_URL = "https://serpapi.com/search"
 VALID_CHARS_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9\s\.\,\'\"\-\+\?\!\/\(\)\[\]\{\}\:\;\&\%\@\#\*\^\$\_\=\~\`\\]+$")
 
 # 사용할 최대 키워드 수
-MAX_KEYWORDS = 10
+MAX_KEYWORDS = 5
 
 
 @log_func
@@ -48,7 +48,8 @@ def get_google_trends_keywords() -> List[str]:
             "api_key": api_key,
             "geo": "KR",
             "hl": "ko",  # 한국어로 결과 요청
-            "hours": 24,
+            "hours": 48,  # 2일간의 트렌드
+            "only_active": True,  # 활성 트렌드만 가져오기
             "engine": "google_trends_trending_now",
             "no_cache": True,
         }

@@ -9,7 +9,7 @@ alwaysApply: false
 
 ### 1. Naver Open API 크롤링 ✅ 구현완료
 - **API 엔드포인트**: `https://openapi.naver.com/v1/search/news.json`
-- **검색 키워드**: `["충격", "공포", "반전", "놀라운", "경악"]` (settings.py에서 관리)
+- **검색 키워드**: `["논란", "충격", "경악", "발칵", "이슈", "화들짝", "화제", "네티즌들은", "온라인 커뮤니티"]` (settings.py에서 관리)
 - **필수 헤더**: `X-Naver-Client-Id`, `X-Naver-Client-Secret`
 - **파라미터**: `query`, `display`, `start`, `sort`
 

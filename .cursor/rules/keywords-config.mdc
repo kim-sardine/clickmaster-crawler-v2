@@ -24,7 +24,11 @@ DEFAULT_KEYWORDS = [
     "충격",
     "경악",
     "발칵",
-    "최근 한 온라인 커뮤니티",
+    "이슈",
+    "화들짝",
+    "화제",
+    "네티즌들은",
+    "온라인 커뮤니티",
 ]
 MAX_ARTICLES_PER_KEYWORD = 100
 CRAWL_DELAY_SECONDS = 0.5
