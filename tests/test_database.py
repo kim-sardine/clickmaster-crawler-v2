@@ -830,3 +830,186 @@ class TestDatabaseOperations:
 
         assert result["fixed"] == 0
         assert result["total_checked"] == 0
+
+    def test_avg_clickbait_score_calculation_less_than_10_articles(self, mock_client):
+        """기사 수가 10개 미만일 때 avg_clickbait_score 계산 테스트"""
+        # Mock 설정
+        mock_articles_table = Mock()
+        mock_journalists_table = Mock()
+        mock_select = Mock()
+        mock_eq = Mock()
+        mock_update = Mock()
+        mock_update_eq = Mock()
+
+        # table() 호출에 따른 분기
+        def table_side_effect(table_name):
+            if table_name == "articles":
+                return mock_articles_table
+            elif table_name == "journalists":
+                return mock_journalists_table
+            return Mock()
+
+        mock_client.table.side_effect = table_side_effect
+
+        # Articles 테이블 Mock (기사 조회)
+        mock_articles_table.select.return_value = mock_select
+        mock_select.eq.return_value = mock_eq
+
+        # Journalists 테이블 Mock (기자 업데이트)
+        mock_journalists_table.update.return_value = mock_update
+        mock_update.eq.return_value = mock_update_eq
+
+        # 5개 기사의 clickbait_score: [90, 80, 70, 60, 50]
+        # 모든 기사의 평균: (90+80+70+60+50)/5 = 70.0
+        mock_articles_result = Mock()
+        mock_articles_result.data = [
+            {"clickbait_score": 90},
+            {"clickbait_score": 80},
+            {"clickbait_score": 70},
+            {"clickbait_score": 60},
+            {"clickbait_score": 50},
+        ]
+        mock_eq.execute.return_value = mock_articles_result
+
+        mock_update_result = Mock()
+        mock_update_result.data = [{"id": "test-journalist"}]
+        mock_update_eq.execute.return_value = mock_update_result
+
+        db_ops = DatabaseOperations()
+        result = db_ops.update_journalist_stats_manual("test-journalist")
+
+        assert result is True
+
+        # update 호출 인자 확인
+        call_args = mock_journalists_table.update.call_args[0][0]
+        assert call_args["article_count"] == 5
+        assert call_args["avg_clickbait_score"] == 70.0  # 모든 5개 기사의 평균
+        assert call_args["max_score"] == 90
+
+    def test_avg_clickbait_score_calculation_more_than_10_articles(self, mock_client):
+        """기사 수가 10개 이상일 때 avg_clickbait_score 계산 테스트 (상위 10개 평균)"""
+        # Mock 설정
+        mock_articles_table = Mock()
+        mock_journalists_table = Mock()
+        mock_select = Mock()
+        mock_eq = Mock()
+        mock_update = Mock()
+        mock_update_eq = Mock()
+
+        # table() 호출에 따른 분기
+        def table_side_effect(table_name):
+            if table_name == "articles":
+                return mock_articles_table
+            elif table_name == "journalists":
+                return mock_journalists_table
+            return Mock()
+
+        mock_client.table.side_effect = table_side_effect
+
+        # Articles 테이블 Mock (기사 조회)
+        mock_articles_table.select.return_value = mock_select
+        mock_select.eq.return_value = mock_eq
+
+        # Journalists 테이블 Mock (기자 업데이트)
+        mock_journalists_table.update.return_value = mock_update
+        mock_update.eq.return_value = mock_update_eq
+
+        # 15개 기사의 clickbait_score: [95,90,85,80,75,70,65,60,55,50,45,40,35,30,25]
+        # 상위 10개의 평균: (95+90+85+80+75+70+65+60+55+50)/10 = 72.5
+        mock_articles_result = Mock()
+        mock_articles_result.data = [
+            {"clickbait_score": 95},
+            {"clickbait_score": 90},
+            {"clickbait_score": 85},
+            {"clickbait_score": 80},
+            {"clickbait_score": 75},
+            {"clickbait_score": 70},
+            {"clickbait_score": 65},
+            {"clickbait_score": 60},
+            {"clickbait_score": 55},
+            {"clickbait_score": 50},
+            {"clickbait_score": 45},
+            {"clickbait_score": 40},
+            {"clickbait_score": 35},
+            {"clickbait_score": 30},
+            {"clickbait_score": 25},
+        ]
+        mock_eq.execute.return_value = mock_articles_result
+
+        mock_update_result = Mock()
+        mock_update_result.data = [{"id": "test-journalist"}]
+        mock_update_eq.execute.return_value = mock_update_result
+
+        db_ops = DatabaseOperations()
+        result = db_ops.update_journalist_stats_manual("test-journalist")
+
+        assert result is True
+
+        # update 호출 인자 확인
+        call_args = mock_journalists_table.update.call_args[0][0]
+        assert call_args["article_count"] == 15
+        assert call_args["avg_clickbait_score"] == 72.5  # 상위 10개 기사의 평균
+        assert call_args["max_score"] == 95
+
+    def test_avg_clickbait_score_calculation_with_null_scores(self, mock_client):
+        """null clickbait_score가 포함된 경우 테스트"""
+        # Mock 설정
+        mock_articles_table = Mock()
+        mock_journalists_table = Mock()
+        mock_select = Mock()
+        mock_eq = Mock()
+        mock_update = Mock()
+        mock_update_eq = Mock()
+
+        # table() 호출에 따른 분기
+        def table_side_effect(table_name):
+            if table_name == "articles":
+                return mock_articles_table
+            elif table_name == "journalists":
+                return mock_journalists_table
+            return Mock()
+
+        mock_client.table.side_effect = table_side_effect
+
+        # Articles 테이블 Mock (기사 조회)
+        mock_articles_table.select.return_value = mock_select
+        mock_select.eq.return_value = mock_eq
+
+        # Journalists 테이블 Mock (기자 업데이트)
+        mock_journalists_table.update.return_value = mock_update
+        mock_update.eq.return_value = mock_update_eq
+
+        # 12개 기사 중 3개는 null, 9개는 점수 있음
+        # 점수 있는 9개: [95,90,85,80,75,70,65,60,55] - 모든 점수 사용 (10개 미만)
+        # 평균: (95+90+85+80+75+70+65+60+55)/9 = 75.0
+        mock_articles_result = Mock()
+        mock_articles_result.data = [
+            {"clickbait_score": 95},
+            {"clickbait_score": 90},
+            {"clickbait_score": 85},
+            {"clickbait_score": 80},
+            {"clickbait_score": 75},
+            {"clickbait_score": 70},
+            {"clickbait_score": 65},
+            {"clickbait_score": 60},
+            {"clickbait_score": 55},
+            {"clickbait_score": None},
+            {"clickbait_score": None},
+            {"clickbait_score": None},
+        ]
+        mock_eq.execute.return_value = mock_articles_result
+
+        mock_update_result = Mock()
+        mock_update_result.data = [{"id": "test-journalist"}]
+        mock_update_eq.execute.return_value = mock_update_result
+
+        db_ops = DatabaseOperations()
+        result = db_ops.update_journalist_stats_manual("test-journalist")
+
+        assert result is True
+
+        # update 호출 인자 확인
+        call_args = mock_journalists_table.update.call_args[0][0]
+        assert call_args["article_count"] == 12  # 전체 기사 수 (null 포함)
+        assert call_args["avg_clickbait_score"] == 75.0  # 점수 있는 9개 기사의 평균
+        assert call_args["max_score"] == 95

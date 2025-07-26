@@ -459,7 +459,10 @@ class DatabaseOperations:
 
             if scored_articles:
                 scores = [article["clickbait_score"] for article in scored_articles]
-                avg_score = sum(scores) / len(scores)
+                # clickbait_score가 높은 상위 10개 기사의 평균 계산
+                sorted_scores = sorted(scores, reverse=True)
+                top_scores = sorted_scores[:10]  # 상위 10개 (또는 전체 기사 수가 10개 미만이면 전체)
+                avg_score = sum(top_scores) / len(top_scores)
                 max_score = max(scores)
             else:
                 avg_score = 0.0
