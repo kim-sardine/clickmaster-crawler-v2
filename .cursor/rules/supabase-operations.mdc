@@ -54,6 +54,11 @@ def get_or_create_journalist(self, name: str, publisher: str, naver_uuid: Option
     # 새 기자 생성
     journalist = Journalist(name=name, publisher=publisher, naver_uuid=naver_uuid)
     return self.client.client.table('journalists').insert(journalist.to_dict()).execute().data[0]
+
+def get_or_create_journalists_batch(self, journalist_specs: List[tuple]) -> Dict[str, Dict[str, Any]]:
+    """기자 정보 배치 조회/생성 (Supabase RPC 활용)"""
+    # 효율적인 배치 처리를 위해 RPC 함수 호출
+    # 중복 제거 및 일괄 처리
 ```
 
 ## 🔍 쿼리 패턴 ✅ 구현완료
@@ -98,44 +103,56 @@ def get_unprocessed_articles(self, limit: int = 1000) -> List[Dict[str, Any]]:
 
 ## 📊 통계 및 집계 ✅ 구현완료
 
-### 기자 통계 관리 (`scripts/sync_journalist_stats.py`)
+### 기자 통계 관리 (`scripts/sync_journalist_stats.py`) ✅ 구현완료
 ```python
 def update_journalist_stats_manual(self, journalist_id: str) -> bool:
     """특정 기자의 통계 수동 업데이트"""
     # 해당 기자의 모든 기사 통계 계산
     # article_count, avg_clickbait_score, max_score 업데이트
+    # Supabase RPC 함수 호출로 효율적 처리
 
 def update_all_journalist_stats(self) -> Dict[str, Any]:
     """모든 기자 통계 업데이트"""
     # 모든 기자에 대해 통계 재계산 및 업데이트
+    # 효율성을 위해 JSONB 포맷으로 전달
 
 def get_journalist_stats_summary(self) -> Dict[str, Any]:
     """기자 통계 요약 조회"""
     # 전체 기자 수, 활성 기자 수, 점수 있는 기자 수 등 반환
+    # 분석 완료/대기 중 기사 수 포함
 
 def fix_inconsistent_stats(self) -> Dict[str, Any]:
     """통계 불일치 감지 및 수정"""
     # 기사 수와 실제 통계 간 불일치 감지 및 수정
+    # RPC 함수 'fix_journalist_stats'를 통한 일괄 처리
 ```
 
-## 🔄 배치 상태 관리 ❌ 미구현
+## 🔄 배치 상태 관리 ✅ 구현완료
 
-### 배치 상태 테이블 (향후 구현 예정)
+### 배치 상태 테이블
 ```sql
 CREATE TABLE batch_status (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id TEXT UNIQUE NOT NULL,
-  status TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW(),
+  status TEXT NOT NULL,  -- 'pending', 'in_progress', 'validating', 'finalizing', 'completed', 'failed', 'cancelled'
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   input_file_id TEXT,
   output_file_id TEXT,
   error_file_id TEXT,
   request_count INTEGER DEFAULT 0,
   completed_count INTEGER DEFAULT 0,
-  failed_count INTEGER DEFAULT 0
+  failed_count INTEGER DEFAULT 0,
+  metadata JSONB,
+  error_message TEXT
 );
 ```
+
+### 배치 상태 관리 기능
+- 활성 배치 조회 (`get_all_active_batches()`)
+- 배치 상태 업데이트 (`update_batch_status()`)
+- 배치 정보 저장 (`save_batch_info_to_database()`)
+- 동시성 제어를 통한 중복 배치 생성 방지
 
 ## 🛠️ 에러 핸들링 ✅ 부분 구현
 
@@ -171,6 +188,12 @@ def retry_db_operation(max_retries=3, delay=1):
         return wrapper
     return decorator
 ```
+
+### 중복 기사 제거 기능 ✅ 구현완료
+- **스크립트**: `scripts/deduplicate_articles.py`
+- **중복 기준**: title, content, journalist_name, publisher가 모두 동일
+- **삭제 우선순위**: clickbait_score가 가장 높은 기사만 유지
+- **Dry-run 모드**: 실제 삭제 전 시뮬레이션 가능
 
 ## 📈 성능 최적화 ✅ 구현완료
 
@@ -226,6 +249,15 @@ python scripts/sync_journalist_stats.py --fix-inconsistencies
 
 # 전체 통계 강제 업데이트
 python scripts/sync_journalist_stats.py --full-update
+```
+
+### 중복 기사 제거
+```bash
+# 중복 기사 확인 (dry-run)
+python scripts/deduplicate_articles.py --dry-run
+
+# 실제 중복 기사 제거
+python scripts/deduplicate_articles.py
 ```
 
 ## 📊 현재 데이터베이스 스키마

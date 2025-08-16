@@ -1,8 +1,88 @@
 
+---
+description: GitHub Actions Workflows
+alwaysApply: false
+---
+
 # GitHub Actions 워크플로우 자동화
 
-## 자동화 파이프라인 계획
+## 자동화 파이프라인 현황 ✅ 구현완료
 
-1. 네이버 뉴스 크롤링 - 매일 새벽 6시 자동 실행
-2. 배치 처리 모니터링 - 매 1시간마다 OpenAI 배치 상태 확인. 완료시 후처리 로직 수행 및 다음 배치 생성.
-3. 기자 통계 동기화 - 매 3시간마다 실행
+### 1. 네이버 뉴스 크롤링 (daily-news-crawl.yml)
+- **실행 시간**: 한국시간 매일 새벽 6시 (UTC 21:00)
+- **스케줄**: `0 21 * * *`
+- **수동 실행**: 지원 (workflow_dispatch)
+- **파라미터**: 
+  - date: 크롤링할 날짜 (기본값: 전날)
+  - dry_run: 테스트 모드
+
+### 2. 시간별 유지보수 작업 (hourly-batch-monitor.yml)
+- **실행 시간**: 매시간 27분 (UTC 기준, 부하 분산)
+- **스케줄**: `27 * * * *`
+- **타임아웃**: 45분
+- **수행 작업**:
+  1. 중복 기사 제거 (deduplicate_articles.py)
+  2. OpenAI 배치 모니터링 (openai_batch_monitor.py)
+  3. 기자 통계 동기화 (sync_journalist_stats.py)
+- **파라미터**: batch_size (1-800, 기본값: 800)
+
+## 환경변수 설정 (GitHub Secrets)
+
+### 필수 Secrets
+```yaml
+SUPABASE_URL: Supabase 프로젝트 URL
+SUPABASE_SERVICE_ROLE_KEY: Supabase 서비스 롤 키
+NAVER_CLIENT_ID: 네이버 API 클라이언트 ID
+NAVER_CLIENT_SECRET: 네이버 API 클라이언트 시크릿
+OPENAI_API_KEY: OpenAI API 키
+```
+
+### 선택적 Secrets
+```yaml
+SERP_API_KEY: SerpAPI 키 (미사용)
+```
+
+## 워크플로우 구조
+
+### 공통 설정
+- **Python 버전**: 3.12
+- **Ubuntu runner**: ubuntu-latest
+- **Environment**: production
+- **캐싱**: pip dependencies (~/.cache/pip)
+
+### 실행 방식
+```bash
+# 모듈 형태로 실행
+python -m scripts.script_name
+```
+
+## 예상 실행 주기
+
+### 매일
+- 06:00 KST: 전날 뉴스 크롤링
+
+### 매시간
+- XX:27: 중복 제거 → 배치 모니터링 → 통계 동기화
+
+## 모니터링 및 로깅
+
+### GitHub Actions 로그
+- 각 스텝별 실행 시간 표시 (UTC/KST)
+- 성공/실패 메시지 출력
+- 상세 에러 로그 포함
+
+### 실행 결과
+- 크롤링된 기사 수
+- 생성/처리된 배치 수
+- 동기화된 기자 통계
+
+## 예외 처리
+
+### 실패 시 동작
+- Workflow는 실패로 표시
+- 다음 스케줄에 다시 시도
+- 수동 재실행 가능
+
+### 타임아웃 처리
+- hourly-batch-monitor: 45분 타임아웃
+- 타임아웃 시 자동 종료
