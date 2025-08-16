@@ -5,17 +5,16 @@
 import re
 import time
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 
-from src.config.settings import settings
-from src.models.article import Article, NaverNewsCrawlerResult
+from src.models.article import Article
 from src.database.operations import DatabaseOperations
 from src.utils.logging_utils import get_logger
-from src.utils.text_utils import normalize_journalist_info
+from src.utils.text_utils import normalize_journalist_info, normalize_naver_url
 
 logger = get_logger(__name__)
 
@@ -281,13 +280,17 @@ class NaverNewsCrawler:
             description = BeautifulSoup(re.sub(r"&[^;]+;", "", item["description"]), "html.parser").get_text()
 
             # 네이버 뉴스 URL인지 확인
-            original_link = item["originallink"]
+            # 원문 링크는 사용하지 않음 (네이버 URL 기준으로 처리)
+            # original_link = item["originallink"]
             link = item["link"]
 
             naver_url = link if "news.naver.com" in link else None
             if not naver_url:
                 logger.debug(f"네이버 뉴스 링크가 아님: {link}")
                 return None
+
+            # URL 정규화 (쿼리 파라미터/프래그먼트 제거 및 mnews→article 통일)
+            naver_url = normalize_naver_url(naver_url)
 
             # 상세 기사 정보 추출 (제목, 기자명, 출판사명, 본문)
             crawl_result = self.extract_article_content(naver_url)
@@ -443,7 +446,15 @@ class NaverNewsCrawler:
                         if len(deduplicated_articles) < len(parsed_articles):
                             logger.info(f"배치 내 중복 제거: {len(parsed_articles)}개 → {len(deduplicated_articles)}개")
 
-                        current_batch_articles.extend(deduplicated_articles)
+                        # 2-2단계: DB 중복 체크 (정규화된 URL 기준)
+                        urls_to_check = [normalize_naver_url(a.naver_url) for a in deduplicated_articles]
+                        duplicate_map = self.db_ops.check_duplicate_articles_batch(urls_to_check)
+
+                        for article in deduplicated_articles:
+                            if duplicate_map.get(normalize_naver_url(article.naver_url), False):
+                                logger.debug(f"DB 중복 스킵: {article.title[:50]}...")
+                                continue
+                            current_batch_articles.extend([article])
                     else:
                         # 중복 체크 없이 모든 기사 추가
                         current_batch_articles.extend(parsed_articles)

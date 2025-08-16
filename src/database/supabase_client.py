@@ -39,7 +39,7 @@ class SupabaseClient:
     def test_connection(self) -> bool:
         """연결 테스트"""
         try:
-            result = self.client.table("articles").select("id").limit(1).execute()
+            self.client.table("articles").select("id").limit(1).execute()
             return True
         except Exception:
             return False

@@ -3,6 +3,7 @@
 """
 
 from typing import Tuple
+from urllib.parse import urlparse
 
 
 def normalize_journalist_info(name: str, publisher: str) -> Tuple[str, str]:
@@ -30,3 +31,43 @@ def normalize_journalist_info(name: str, publisher: str) -> Tuple[str, str]:
         name = f"익명기자_{publisher}"
 
     return name, publisher
+
+
+def normalize_naver_url(url: str) -> str:
+    """
+    네이버 뉴스 URL을 표준 형태로 정규화
+
+    규칙:
+    - 쿼리스트링/프래그먼트 제거
+    - '/mnews/article/' → '/article/'로 통일
+    - 필요 시 말미 슬래시 제거
+
+    Args:
+        url: 원본 URL
+
+    Returns:
+        정규화된 URL
+    """
+    if not isinstance(url, str):
+        return ""
+
+    # 공백 제거
+    url = url.strip()
+    if not url:
+        return ""
+
+    parsed = urlparse(url)
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc
+    path = parsed.path
+
+    # '/mnews/article/' → '/article/'
+    path = path.replace("/mnews/article/", "/article/")
+
+    # 말미 슬래시 제거 (단, 루트 제외)
+    if path.endswith("/") and len(path) > 1:
+        path = path[:-1]
+
+    # 표준 조합 (쿼리/프래그먼트 제거)
+    normalized = f"{scheme}://{netloc}{path}"
+    return normalized

@@ -3,12 +3,12 @@
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from .supabase_client import get_supabase_client
 from src.models.article import Article, Journalist
 from src.utils.logging_utils import get_logger
-from src.utils.text_utils import normalize_journalist_info
+from src.utils.text_utils import normalize_journalist_info, normalize_naver_url
 
 logger = get_logger(__name__)
 
@@ -31,7 +31,8 @@ class DatabaseOperations:
             False: 신규
         """
         try:
-            result = self.client.client.table("articles").select("id").eq("naver_url", naver_url).execute()
+            nurl = normalize_naver_url(naver_url)
+            result = self.client.client.table("articles").select("id").eq("naver_url", nurl).execute()
             return bool(result.data)
         except Exception as e:
             logger.error(f"중복 체크 실패 [{naver_url}]: {e}")
@@ -49,8 +50,8 @@ class DatabaseOperations:
             return {}
 
         try:
-            # 중복 제거하여 효율화
-            unique_urls = list(set(naver_urls))
+            # 중복 제거 및 정규화하여 효율화
+            unique_urls = list({normalize_naver_url(u) for u in naver_urls})
             result = self.client.client.table("articles").select("naver_url").in_("naver_url", unique_urls).execute()
 
             existing = {row["naver_url"] for row in result.data}
@@ -369,6 +370,8 @@ class DatabaseOperations:
 
                 # 기사에 기자 ID 설정
                 article.journalist_id = journalist_cache[journalist_key]["id"]
+                # URL 정규화 적용 (중복 삽입 방지)
+                article.naver_url = normalize_naver_url(article.naver_url)
                 article_data = article.to_dict()
                 articles_data.append(article_data)
 
