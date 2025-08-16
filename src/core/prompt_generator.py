@@ -39,6 +39,10 @@ class PromptGenerator:
         Returns:
             클릭베이트 평가 프롬프트
         """
+        # 입력 방어 및 트리밍
+        title = (title or "").strip()
+        content = (content or "").strip()
+
         prompt = f"""다음 단계를 따라 분석을 진행해주세요:
 
 1. 뉴스 제목 분석:

@@ -19,6 +19,47 @@ class DatabaseOperations:
     def __init__(self):
         self.client = get_supabase_client()
 
+    # -----------------------------
+    # Duplicates Checking Utilities
+    # -----------------------------
+    def check_duplicate_article(self, naver_url: str) -> bool:
+        """
+        단일 URL 중복 여부 확인
+
+        Returns:
+            True: 이미 존재
+            False: 신규
+        """
+        try:
+            result = self.client.client.table("articles").select("id").eq("naver_url", naver_url).execute()
+            return bool(result.data)
+        except Exception as e:
+            logger.error(f"중복 체크 실패 [{naver_url}]: {e}")
+            # 에러 시 보수적으로 신규로 간주하여 진행
+            return False
+
+    def check_duplicate_articles_batch(self, naver_urls: List[str]) -> Dict[str, bool]:
+        """
+        URL 리스트에 대한 중복 여부 배치 확인
+
+        Returns:
+            {url: True(중복) | False(신규)}
+        """
+        if not naver_urls:
+            return {}
+
+        try:
+            # 중복 제거하여 효율화
+            unique_urls = list(set(naver_urls))
+            result = self.client.client.table("articles").select("naver_url").in_("naver_url", unique_urls).execute()
+
+            existing = {row["naver_url"] for row in result.data}
+            return {url: (url in existing) for url in naver_urls}
+        except Exception as e:
+            logger.error(f"배치 중복 체크 실패: {e}")
+            # 에러 시 모두 신규로 간주
+            return {url: False for url in naver_urls}
+
     def get_or_create_journalist(self, name: str, publisher: str, naver_uuid: Optional[str] = None) -> Dict[str, Any]:
         """
         기자 정보 조회 또는 생성
@@ -118,13 +159,17 @@ class DatabaseOperations:
 
                     try:
                         # 청크 단위로 쿼리 실행
-                        result = (
-                            self.client.client.table("journalists")
-                            .select("*")
-                            .in_("name", chunk_names)
-                            .in_("publisher", chunk_publishers)
-                            .execute()
-                        )
+                        # 빈 배열로 in_ 호출 시 에러 방지
+                        if not chunk_names or not chunk_publishers:
+                            result = type("_R", (), {"data": []})()
+                        else:
+                            result = (
+                                self.client.client.table("journalists")
+                                .select("*")
+                                .in_("name", chunk_names)
+                                .in_("publisher", chunk_publishers)
+                                .execute()
+                            )
 
                         # 클라이언트에서 정확한 (name, publisher) 조합 필터링
                         chunk_combinations = set(chunk)
@@ -163,7 +208,17 @@ class DatabaseOperations:
             for name, publisher in normalized_specs:
                 journalist_key = f"{name}_{publisher}"
                 if journalist_key not in existing_journalists:
-                    journalist = Journalist(name=name, publisher=publisher)
+                    try:
+                        journalist = Journalist(name=name, publisher=publisher)
+                    except Exception as validation_error:
+                        # 방어 로직: 비정상 이름은 익명 기자로 대체
+                        safe_name = f"익명기자_{publisher}"
+                        logger.warning(
+                            f"무효 기자명 감지로 익명 처리: [{name}, {publisher}] -> {safe_name} ({validation_error})"
+                        )
+                        journalist = Journalist(name=safe_name, publisher=publisher)
+                        journalist_key = f"{safe_name}_{publisher}"
+
                     new_journalists_data.append(journalist.to_dict())
 
             # 4단계: 새 기자들 배치 생성
@@ -294,12 +349,23 @@ class DatabaseOperations:
                 )
                 journalist_key = f"{normalized_name}_{normalized_publisher}"
 
+                # 캐시에 없으면 개별 조회/생성 폴백
                 if journalist_key not in journalist_cache:
-                    logger.warning(
-                        f"기자 정보가 없어 기사 제외: {article.title[:50]}... (기자: {article.journalist_name}, 언론사: {article.publisher})"
-                    )
-                    skipped_count += 1
-                    continue
+                    try:
+                        journalist_info = self.get_or_create_journalist(article.journalist_name, article.publisher)
+                        if journalist_info and journalist_info.get("id"):
+                            journalist_cache[journalist_key] = journalist_info
+                            logger.info(
+                                f"기자 캐시 폴백 성공: {journalist_info['name']} ({journalist_info['publisher']})"
+                            )
+                        else:
+                            raise ValueError("개별 기자 조회 결과가 비어있습니다")
+                    except Exception as e:
+                        logger.warning(
+                            f"기자 정보가 없어 기사 제외: {article.title[:50]}... (기자: {article.journalist_name}, 언론사: {article.publisher}, 오류: {e})"
+                        )
+                        skipped_count += 1
+                        continue
 
                 # 기사에 기자 ID 설정
                 article.journalist_id = journalist_cache[journalist_key]["id"]

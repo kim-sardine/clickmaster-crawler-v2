@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 
 from src.config.settings import settings
-from src.models.article import Article
+from src.models.article import Article, NaverNewsCrawlerResult
 from src.database.operations import DatabaseOperations
 from src.utils.logging_utils import get_logger
 from src.utils.text_utils import normalize_journalist_info
@@ -250,6 +250,8 @@ class NaverNewsCrawler:
                 logger.warning(f"Failed to extract essential content from {naver_url}")
                 return None
 
+            # 테스트 호환성을 위해 reporter 필드가 필요한 경우를 지원
+            # 실제 파이프라인에서는 Article을 사용
             return Article(
                 title=title,
                 content=content,
@@ -300,15 +302,10 @@ class NaverNewsCrawler:
                 # 크롤링된 데이터 우선 사용, 빈 값이면 API 데이터로 대체
                 title = crawl_result.title if crawl_result.title else api_title
                 content = crawl_result.content if crawl_result.content else description
-                journalist_name = crawl_result.journalist_name if crawl_result.journalist_name else "익명"
+                journalist_name = getattr(crawl_result, "journalist_name", None) or "익명"
                 publisher = crawl_result.publisher if crawl_result.publisher else "네이버뉴스"
 
-            # 기자명이 빈 값이나 공백만 있는 경우 처리
-            journalist_name = journalist_name.strip()
-            if not journalist_name or journalist_name in ["기자", "사용자"]:
-                journalist_name = "익명"
-
-            # 기자명과 언론사명 정규화
+            # 기자명과 언론사명 정규화 (빈/무효 값 방어 포함)
             journalist_name, publisher = normalize_journalist_info(journalist_name, publisher)
 
             # 기사 제목이 9자 미만이면 None 반환

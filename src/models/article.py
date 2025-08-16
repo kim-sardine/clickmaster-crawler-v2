@@ -26,17 +26,23 @@ class Article:
 
     def __post_init__(self):
         """데이터 검증"""
-        if len(self.title.strip()) < 9:
-            raise ValueError("제목은 최소 9자 이상이어야 합니다")
+        title_stripped = self.title.strip() if isinstance(self.title, str) else ""
+        content_stripped = self.content.strip() if isinstance(self.content, str) else ""
 
-        if len(self.content.strip()) < 100:
-            raise ValueError("내용은 최소 100자 이상이어야 합니다")
+        if len(title_stripped) < 9:
+            preview = title_stripped if len(title_stripped) <= 50 else title_stripped[:50] + "..."
+            raise ValueError(f"제목은 최소 9자 이상이어야 합니다 (길이={len(title_stripped)}, 제목='{preview}')")
 
-        if not self.naver_url.startswith(("https://n.news.naver.com", "https://m.entertain.naver.com")):
-            raise ValueError("유효하지 않은 네이버 뉴스 URL입니다")
+        if len(content_stripped) < 100:
+            raise ValueError(f"내용은 최소 100자 이상이어야 합니다 (길이={len(content_stripped)})")
+
+        if not isinstance(self.naver_url, str) or not self.naver_url.startswith(
+            ("https://n.news.naver.com", "https://m.entertain.naver.com")
+        ):
+            raise ValueError(f"유효하지 않은 네이버 뉴스 URL입니다 (url='{self.naver_url}')")
 
         if self.clickbait_score is not None and not (0 <= self.clickbait_score <= 100):
-            raise ValueError("낚시 점수는 0-100 사이의 값이어야 합니다")
+            raise ValueError(f"낚시 점수는 0-100 사이의 값이어야 합니다 (value={self.clickbait_score})")
 
     def is_duplicate_of(self, other: "Article") -> bool:
         """
@@ -116,6 +122,21 @@ class Article:
 
         return data
 
+    # 테스트 호환성: reporter alias
+    @property
+    def reporter(self) -> str:
+        return self.journalist_name
+
+
+@dataclass
+class NaverNewsCrawlerResult:
+    """크롤러 내부 사용/테스트용 결과 객체 (테스트 호환성 지원)"""
+
+    title: str
+    content: str
+    reporter: str
+    publisher: str
+
 
 @dataclass
 class Journalist:
@@ -133,11 +154,18 @@ class Journalist:
 
     def __post_init__(self):
         """데이터 검증"""
-        if len(self.name.strip()) < 2:
-            raise ValueError("기자명은 최소 2자 이상이어야 합니다")
+        name_stripped = self.name.strip() if isinstance(self.name, str) else ""
+        publisher_stripped = self.publisher.strip() if isinstance(self.publisher, str) else ""
 
-        if len(self.publisher.strip()) < 2:
-            raise ValueError("언론사명은 최소 2자 이상이어야 합니다")
+        if len(name_stripped) < 2:
+            raise ValueError(
+                f"기자명은 최소 2자 이상이어야 합니다 (name='{name_stripped}', length={len(name_stripped)})"
+            )
+
+        if len(publisher_stripped) < 2:
+            raise ValueError(
+                f"언론사명은 최소 2자 이상이어야 합니다 (publisher='{publisher_stripped}', length={len(publisher_stripped)})"
+            )
 
     def to_dict(self) -> dict:
         """딕셔너리로 변환"""
