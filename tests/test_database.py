@@ -1013,3 +1013,173 @@ class TestDatabaseOperations:
         assert call_args["article_count"] == 12  # 전체 기사 수 (null 포함)
         assert call_args["avg_clickbait_score"] == 75.0  # 점수 있는 9개 기사의 평균
         assert call_args["max_score"] == 95
+
+    def test_bulk_insert_articles_with_anonymous_journalist_normalization(self, mock_client):
+        """익명 기자 정규화가 포함된 배치 삽입 테스트"""
+        # get_or_create_journalists_batch Mock
+        with patch.object(DatabaseOperations, "get_or_create_journalists_batch") as mock_batch_journalist:
+            # 배치 기자 처리 결과 - 정규화된 이름으로 저장
+            mock_batch_journalist.return_value = {
+                "익명기자_조선일보_조선일보": {
+                    "id": "journalist-anon-1",
+                    "name": "익명기자_조선일보",
+                    "publisher": "조선일보",
+                },
+                "익명기자_중앙일보_중앙일보": {
+                    "id": "journalist-anon-2",
+                    "name": "익명기자_중앙일보",
+                    "publisher": "중앙일보",
+                },
+                "홍길동_한겨레": {"id": "journalist-3", "name": "홍길동", "publisher": "한겨레"},
+            }
+
+            # 배치 삽입 Mock 설정
+            mock_table = Mock()
+            mock_insert = Mock()
+
+            mock_client.table.return_value = mock_table
+            mock_table.insert.return_value = mock_insert
+            mock_insert.execute.return_value = Mock(
+                data=[
+                    {"id": "article-1", "title": "기사 1", "journalist_id": "journalist-anon-1"},
+                    {"id": "article-2", "title": "기사 2", "journalist_id": "journalist-anon-2"},
+                    {"id": "article-3", "title": "기사 3", "journalist_id": "journalist-3"},
+                ]
+            )
+
+            db_ops = DatabaseOperations()
+
+            # 다양한 익명 기자 케이스 테스트
+            articles = [
+                Article(
+                    title="테스트 기사 제목1입니다",
+                    content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다.",
+                    journalist_name="",  # 빈 문자열 -> 익명기자_조선일보로 정규화
+                    publisher="조선일보",
+                    published_at=datetime.now(),
+                    naver_url="https://n.news.naver.com/article/023/0003123456",
+                ),
+                Article(
+                    title="테스트 기사 제목2입니다",
+                    content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다.",
+                    journalist_name="익명",  # 익명 -> 익명기자_중앙일보로 정규화
+                    publisher="중앙일보",
+                    published_at=datetime.now(),
+                    naver_url="https://n.news.naver.com/article/001/0014123456",
+                ),
+                Article(
+                    title="테스트 기사 제목3입니다",
+                    content="이것은 테스트 기사 내용입니다. 최소 100자 이상이어야 하므로 더 길게 작성해보겠습니다. 충분히 긴 내용이 되도록 추가 텍스트를 넣어보겠습니다. 이제 100자를 충분히 넘겼을 것입니다.",
+                    journalist_name="홍길동",  # 정상 기자명
+                    publisher="한겨레",
+                    published_at=datetime.now(),
+                    naver_url="https://n.news.naver.com/article/028/0002123456",
+                ),
+            ]
+
+            result = db_ops.bulk_insert_articles(articles)
+
+            # 결과 검증
+            assert len(result) == 3
+            assert result[0]["id"] == "article-1"
+            assert result[1]["id"] == "article-2"
+            assert result[2]["id"] == "article-3"
+
+            # 배치 기자 처리가 한 번만 호출되었는지 확인
+            mock_batch_journalist.assert_called_once()
+
+            # 배치 기자 처리에 전달된 고유 기자 조합 확인
+            batch_call_args = mock_batch_journalist.call_args[0][0]  # 첫 번째 인수
+            assert len(batch_call_args) == 3
+            assert ("", "조선일보") in batch_call_args  # 빈 문자열 그대로 전달
+            assert ("익명", "중앙일보") in batch_call_args  # 익명 그대로 전달
+            assert ("홍길동", "한겨레") in batch_call_args
+
+            # 배치 삽입이 한 번만 호출되었는지 확인
+            mock_table.insert.assert_called_once()
+
+            # 배치 삽입에 전달된 데이터 검증
+            insert_call_args = mock_table.insert.call_args[0][0]  # 첫 번째 인수
+            assert len(insert_call_args) == 3
+
+            # 각 기사에 올바른 기자 ID가 설정되었는지 확인
+            assert insert_call_args[0]["journalist_id"] == "journalist-anon-1"  # 익명기자_조선일보
+            assert insert_call_args[1]["journalist_id"] == "journalist-anon-2"  # 익명기자_중앙일보
+            assert insert_call_args[2]["journalist_id"] == "journalist-3"  # 홍길동
+
+    def test_get_or_create_journalists_batch_large_dataset_chunking(self, mock_client):
+        """대량 데이터셋에서 청크 처리 테스트"""
+        # Mock 설정
+        mock_table = Mock()
+        mock_insert = Mock()
+
+        # 150명의 기자 (3개의 50명 청크로 처리될 것)
+        journalist_specs = [(f"기자{i}", f"언론사{i % 10}") for i in range(150)]
+
+        # 청크별 조회 결과를 담을 리스트
+        chunk_query_results = []
+
+        # 각 청크에 대한 Mock 체인 설정
+        for i in range(3):
+            mock_select = Mock()
+            mock_in_name = Mock()
+            mock_in_publisher = Mock()
+
+            # 체인 설정: table().select().in_().in_().execute()
+            mock_select.in_.return_value = mock_in_name
+            mock_in_name.in_.return_value = mock_in_publisher
+            mock_in_publisher.execute.return_value = Mock(data=[])  # 빈 결과 (모두 신규)
+
+            chunk_query_results.append(mock_select)
+
+        # table() 호출 횟수에 따라 다른 mock_select 반환
+        table_call_count = 0
+
+        def table_side_effect(table_name):
+            nonlocal table_call_count
+            if table_name == "journalists":
+                if table_call_count < 3:  # 처음 3번은 조회
+                    result = Mock()
+                    result.select.return_value = chunk_query_results[table_call_count]
+                    table_call_count += 1
+                    return result
+                else:  # 이후는 삽입
+                    result = Mock()
+                    result.insert.return_value = mock_insert
+                    return result
+            return mock_table
+
+        mock_client.table.side_effect = table_side_effect
+        mock_table.insert.return_value = mock_insert
+
+        # 각 청크의 생성 결과 시뮬레이션
+        created_data = []
+        for i in range(3):
+            chunk_start = i * 50
+            chunk_end = min((i + 1) * 50, 150)
+            chunk_data = [
+                {"id": f"journalist-{j}", "name": f"기자{j}", "publisher": f"언론사{j % 10}"}
+                for j in range(chunk_start, chunk_end)
+            ]
+            created_data.append(Mock(data=chunk_data))
+
+        mock_insert.execute.side_effect = created_data
+
+        db_ops = DatabaseOperations()
+        result = db_ops.get_or_create_journalists_batch(journalist_specs)
+
+        # 모든 기자가 결과에 포함되어야 함
+        assert len(result) == 150
+
+        # 청크 단위로 조회가 이루어졌는지 확인
+        for mock_select in chunk_query_results:
+            assert mock_select.in_.called
+
+        # 청크 단위로 생성이 이루어졌는지 확인 (3번)
+        assert mock_insert.execute.call_count == 3
+
+        # 각 청크의 크기 확인
+        insert_calls = mock_insert.call_args_list
+        for i, call in enumerate(insert_calls):
+            expected_size = 50 if i < 2 else 50  # 모든 청크가 50명
+            assert len(call[0][0]) == expected_size

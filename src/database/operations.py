@@ -101,53 +101,62 @@ class DatabaseOperations:
             # 2단계: 기존 기자들 일괄 조회 (진짜 배치 처리)
             existing_journalists = {}
             if normalized_specs:
-                # 모든 이름과 출판사를 수집
-                all_names = list(set([name for name, publisher in normalized_specs]))
-                all_publishers = list(set([publisher for name, publisher in normalized_specs]))
+                # URL 길이 제한을 피하기 위해 청크로 나누어 처리
+                CHUNK_SIZE = 50  # 한 번에 처리할 최대 기자 수
 
-                logger.info(f"배치 기자 조회: {len(all_names)}개 이름, {len(all_publishers)}개 출판사")
+                # normalized_specs를 청크로 나누기
+                for i in range(0, len(normalized_specs), CHUNK_SIZE):
+                    chunk = normalized_specs[i : i + CHUNK_SIZE]
 
-                try:
-                    # 한 번의 쿼리로 모든 관련 기자들 조회
-                    result = (
-                        self.client.client.table("journalists")
-                        .select("*")
-                        .in_("name", all_names)
-                        .in_("publisher", all_publishers)
-                        .execute()
+                    # 청크 내에서 이름과 출판사 수집
+                    chunk_names = list(set([name for name, publisher in chunk]))
+                    chunk_publishers = list(set([publisher for name, publisher in chunk]))
+
+                    logger.info(
+                        f"배치 기자 조회 청크 {i // CHUNK_SIZE + 1}/{(len(normalized_specs) + CHUNK_SIZE - 1) // CHUNK_SIZE}: {len(chunk_names)}개 이름, {len(chunk_publishers)}개 출판사"
                     )
 
-                    # 클라이언트에서 정확한 (name, publisher) 조합 필터링
-                    target_combinations = set(normalized_specs)
-                    for journalist in result.data:
-                        journalist_combo = (journalist["name"], journalist["publisher"])
-                        if journalist_combo in target_combinations:
-                            key = f"{journalist['name']}_{journalist['publisher']}"
-                            existing_journalists[key] = journalist
+                    try:
+                        # 청크 단위로 쿼리 실행
+                        result = (
+                            self.client.client.table("journalists")
+                            .select("*")
+                            .in_("name", chunk_names)
+                            .in_("publisher", chunk_publishers)
+                            .execute()
+                        )
 
-                    logger.info(f"기존 기자 조회 완료: {len(existing_journalists)}명 (단일 쿼리)")
-
-                except Exception as e:
-                    logger.error(f"배치 기자 조회 실패: {e}")
-                    # 실패 시 개별 조회로 폴백
-                    logger.warning("개별 기자 조회로 폴백합니다...")
-                    for name, publisher in normalized_specs:
-                        try:
-                            result = (
-                                self.client.client.table("journalists")
-                                .select("*")
-                                .eq("name", name)
-                                .eq("publisher", publisher)
-                                .execute()
-                            )
-
-                            for journalist in result.data:
+                        # 클라이언트에서 정확한 (name, publisher) 조합 필터링
+                        chunk_combinations = set(chunk)
+                        for journalist in result.data:
+                            journalist_combo = (journalist["name"], journalist["publisher"])
+                            if journalist_combo in chunk_combinations:
                                 key = f"{journalist['name']}_{journalist['publisher']}"
                                 existing_journalists[key] = journalist
 
-                        except Exception as individual_e:
-                            logger.warning(f"개별 기자 조회 실패 [{name}, {publisher}]: {individual_e}")
-                            continue
+                    except Exception as e:
+                        logger.error(f"배치 기자 조회 청크 실패: {e}")
+                        # 실패한 청크는 개별 조회로 폴백
+                        logger.warning(f"청크 {i // CHUNK_SIZE + 1} 개별 기자 조회로 폴백합니다...")
+                        for name, publisher in chunk:
+                            try:
+                                result = (
+                                    self.client.client.table("journalists")
+                                    .select("*")
+                                    .eq("name", name)
+                                    .eq("publisher", publisher)
+                                    .execute()
+                                )
+
+                                for journalist in result.data:
+                                    key = f"{journalist['name']}_{journalist['publisher']}"
+                                    existing_journalists[key] = journalist
+
+                            except Exception as individual_e:
+                                logger.warning(f"개별 기자 조회 실패 [{name}, {publisher}]: {individual_e}")
+                                continue
+
+                logger.info(f"기존 기자 조회 완료: {len(existing_journalists)}명")
 
             # 3단계: 새로 생성할 기자들 식별
             new_journalists_data = []
@@ -160,38 +169,48 @@ class DatabaseOperations:
             # 4단계: 새 기자들 배치 생성
             if new_journalists_data:
                 logger.info(f"새 기자 배치 생성: {len(new_journalists_data)}명")
-                try:
-                    result = self.client.client.table("journalists").insert(new_journalists_data).execute()
 
-                    if result.data:
-                        # 새로 생성된 기자들을 기존 기자 딕셔너리에 추가
-                        for journalist in result.data:
-                            key = f"{journalist['name']}_{journalist['publisher']}"
-                            existing_journalists[key] = journalist
-                            logger.debug(
-                                f"새 기자 생성: {journalist['name']} ({journalist['publisher']}) - ID: {journalist['id']}"
-                            )
-                    else:
-                        logger.error("배치 기자 생성 실패 - 응답 데이터 없음")
+                # 새 기자도 청크로 나누어 생성
+                CHUNK_SIZE = 50
+                for i in range(0, len(new_journalists_data), CHUNK_SIZE):
+                    chunk = new_journalists_data[i : i + CHUNK_SIZE]
+                    logger.info(
+                        f"새 기자 생성 청크 {i // CHUNK_SIZE + 1}/{(len(new_journalists_data) + CHUNK_SIZE - 1) // CHUNK_SIZE}: {len(chunk)}명"
+                    )
 
-                except Exception as e:
-                    logger.error(f"배치 기자 생성 실패: {e}")
-                    # 실패 시 개별 생성으로 폴백
-                    for journalist_data in new_journalists_data:
-                        try:
-                            individual_result = (
-                                self.client.client.table("journalists").insert(journalist_data).execute()
-                            )
-                            if individual_result.data:
-                                journalist = individual_result.data[0]
+                    try:
+                        result = self.client.client.table("journalists").insert(chunk).execute()
+
+                        if result.data:
+                            # 새로 생성된 기자들을 기존 기자 딕셔너리에 추가
+                            for journalist in result.data:
                                 key = f"{journalist['name']}_{journalist['publisher']}"
                                 existing_journalists[key] = journalist
-                                logger.info(f"개별 기자 생성: {journalist['name']} ({journalist['publisher']})")
-                        except Exception as individual_e:
-                            logger.error(
-                                f"개별 기자 생성 실패 [{journalist_data['name']}, {journalist_data['publisher']}]: {individual_e}"
-                            )
-                            continue
+                                logger.debug(
+                                    f"새 기자 생성: {journalist['name']} ({journalist['publisher']}) - ID: {journalist['id']}"
+                                )
+                        else:
+                            logger.error(f"배치 기자 생성 청크 {i // CHUNK_SIZE + 1} 실패 - 응답 데이터 없음")
+
+                    except Exception as e:
+                        logger.error(f"배치 기자 생성 청크 {i // CHUNK_SIZE + 1} 실패: {e}")
+                        # 실패한 청크만 개별 생성으로 폴백
+                        logger.warning(f"청크 {i // CHUNK_SIZE + 1} 개별 기자 생성으로 폴백합니다...")
+                        for journalist_data in chunk:
+                            try:
+                                individual_result = (
+                                    self.client.client.table("journalists").insert(journalist_data).execute()
+                                )
+                                if individual_result.data:
+                                    journalist = individual_result.data[0]
+                                    key = f"{journalist['name']}_{journalist['publisher']}"
+                                    existing_journalists[key] = journalist
+                                    logger.info(f"개별 기자 생성: {journalist['name']} ({journalist['publisher']})")
+                            except Exception as individual_e:
+                                logger.error(
+                                    f"개별 기자 생성 실패 [{journalist_data['name']}, {journalist_data['publisher']}]: {individual_e}"
+                                )
+                                continue
 
             logger.info(f"배치 기자 처리 완료: 총 {len(existing_journalists)}명")
             return existing_journalists
@@ -269,10 +288,16 @@ class DatabaseOperations:
             skipped_count = 0
 
             for article in articles:
-                journalist_key = f"{article.journalist_name}_{article.publisher}"
+                # 기자명과 언론사명 정규화하여 캐시 키 생성
+                normalized_name, normalized_publisher = normalize_journalist_info(
+                    article.journalist_name, article.publisher
+                )
+                journalist_key = f"{normalized_name}_{normalized_publisher}"
 
                 if journalist_key not in journalist_cache:
-                    logger.warning(f"기자 정보가 없어 기사 제외: {article.title[:50]}...")
+                    logger.warning(
+                        f"기자 정보가 없어 기사 제외: {article.title[:50]}... (기자: {article.journalist_name}, 언론사: {article.publisher})"
+                    )
                     skipped_count += 1
                     continue
 
