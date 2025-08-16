@@ -107,6 +107,11 @@ def main():
 
         logger.info(f"크롤링 완료: {saved_count}개 기사 처리")
 
+        # 처리된 기사가 0개면 실패로 처리
+        if saved_count == 0:
+            logger.error("처리된 기사가 0개입니다. 크롤링 실패로 간주합니다.")
+            sys.exit(1)
+
     except ValueError as e:
         logger.error(f"입력값 오류: {e}")
         sys.exit(1)
