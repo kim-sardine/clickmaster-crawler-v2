@@ -79,12 +79,6 @@ def get_google_trends_keywords() -> List[str]:
             # 최대 20개의 키워드만 사용
             keywords = keywords[:MAX_KEYWORDS]
             logger.info(f"Retrieved {len(keywords)} keywords from Google Trends")
-
-            # 기본 키워드 추가하고 중복 제거
-            keywords.extend(settings.DEFAULT_KEYWORDS)
-            keywords = list(set(keywords))
-
-            logger.info(f"Retrieved {len(keywords)} keywords from Google Trends")
             return keywords
         else:
             logger.error("Invalid response format from SerpApi")
@@ -112,7 +106,14 @@ def get_combined_keywords() -> List[str]:
     Raises:
         SystemExit: Google Trends API 호출 실패 시 프로세스 종료
     """
-    # Google Trends 키워드 가져오기 (이미 DEFAULT_KEYWORDS 포함)
-    keywords = get_google_trends_keywords()
-    logger.info(f"Final keyword list contains {len(keywords)} keywords")
-    return keywords
+    # Google Trends 키워드 가져오기
+    trends_keywords = get_google_trends_keywords()
+
+    # 기본 키워드와 결합하고 중복 제거
+    combined_keywords = list(set(trends_keywords + settings.DEFAULT_KEYWORDS))
+
+    logger.info(
+        f"Combined {len(trends_keywords)} Google Trends keywords with {len(settings.DEFAULT_KEYWORDS)} default keywords"
+    )
+    logger.info(f"Final keyword list contains {len(combined_keywords)} unique keywords")
+    return combined_keywords
